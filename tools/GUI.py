@@ -128,11 +128,30 @@ class Board:
         corners = {('a',1):'w_q', ('h',1):'w_k', ('a',8):'b_q', ('h',8):'b_k'}
         for pos, key in corners.items():
             col = ord(pos[0]) - 97
-            row = 8 - pos[1]
+            row = 8 - int(pos[1])
             if self.grid[row][col].piece.lower() != 'r':
                 self.castling_rights[key] = False
 
         return changed
+    def cell_At(self, pos:str):
+        col = ord(pos[0]) - 97
+        row = 8 - int(pos[1])
+        return self.grid[row][col]
+    def is_in_check(self, color):
+        # Find king position
+        king_pos = None
+        for rowi, row in enumerate(self.grid):
+            for coli, cell in enumerate(row):
+                if (color == 'w' and cell.piece == 'K') or (color == 'b' and cell.piece == 'k'):
+                    king_pos = (rowi, coli)  # store as int position
+                    break
+            if king_pos:
+                break
+
+        if not king_pos:
+            return False
+
+
 
     def show_moves(self, cell:cell):
         reachable_cells = []
@@ -243,12 +262,23 @@ class Board:
                     reachable_cells.append(self.grid[row][6])
                 if self.castling_rights.get('b_q') and self.grid[row][0].piece.lower() == 'r' and all(self.grid[row][c].piece == "e" for c in (1,2,3)):
                     reachable_cells.append(self.grid[row][2])
+            legal_moves = []
+            for target in reachable_cells:
+                # make a trial move
+                temp = Board(self.to_FEN())
+                temp.move(cell.pos, target.pos)
+                # only keep if not in check
+                if not temp.is_in_check('w' if cell.piece.isupper() else 'b'):
+                    legal_moves.append(target)
+            return legal_moves
 
         return reachable_cells
 
-    def to_FEN(self):
+    def to_FEN(self,grid=None):
+        if grid is None:
+            grid = self.grid
         fen_rows = []
-        for row in self.grid:
+        for row in grid:
             cnt = 0
             s = ""
             for c in row:
