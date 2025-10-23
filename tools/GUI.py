@@ -17,7 +17,28 @@ class Board:
         # Castling rights & en-passant square storage
         self.castling_rights = {'w_k': True, 'w_q': True, 'b_k': True, 'b_q': True}
         self.en_passant_target = None  # e.g. ('e',6) or None
+        self.position_table={}
         self.FENtoGrid(FEN)
+    def get_move_count(self, FEN=''):
+        """Return total half-moves played from FEN"""
+        if FEN == '':
+            FEN = self.to_FEN()
+
+        try:
+            parts = FEN.split()
+            turn = parts[1]  # 'w' or 'b'
+            fullmove = int(parts[5])
+
+            # Convert fullmove number + turn into total move count
+            move_count = (fullmove - 1) * 2
+            if turn == 'b':  # if it's black's turn then white already moved this full move
+                move_count += 1
+
+            return move_count
+
+        except:
+            return 0
+
 
     def FENtoGrid(self, FEN):
         rows = FEN.split()[0].split('/')
@@ -31,6 +52,7 @@ class Board:
                             pos=(chr(col_idx+97), 8-i),
                             piece="e"
                         )
+                        self.position_table[self.grid[i][col_idx].piece]=self.grid[i][col_idx]
                         col_idx += 1
                 else:
                     self.grid[i][col_idx] = cell(
@@ -38,6 +60,7 @@ class Board:
                         pos=(chr(col_idx+97), 8-i),
                         piece=char
                     )
+                    self.position_table[self.grid[i][col_idx].piece]=self.grid[i][col_idx]
                     col_idx += 1
 
     def move(self, from_pos:tuple, to_pos:tuple, promote_to: str = None):
@@ -137,6 +160,16 @@ class Board:
         col = ord(pos[0]) - 97
         row = 8 - int(pos[1])
         return self.grid[row][col]
+    def get_attackers(self, board, target_cell:cell, attacker_color:str):
+        attackers = []
+        for r in board.grid:
+            for sq in r:
+                if sq.piece != "e":
+                    is_attacker = (sq.piece.isupper() and attacker_color=='w') or (sq.piece.islower() and attacker_color=='b')
+                    if is_attacker:
+                        if target_cell in board.show_moves(sq):
+                            attackers.append(sq)
+        return attackers
     def is_in_check(self, color):
         # Find king position
         king_pos = None
