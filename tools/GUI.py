@@ -73,7 +73,7 @@ class Board:
         from_row = 8 - from_pos[1]
         to_col = ord(to_pos[0]) - 97
         to_row = 8 - to_pos[1]
-
+        self.turn = 'b' if self.turn == 'w' else 'w'
         piece = self.grid[from_row][from_col].piece
         if piece == "e":
             return changed
