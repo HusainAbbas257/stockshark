@@ -459,6 +459,7 @@ class Board:
         to_cell = move.t
         piece = from_cell.piece
         captured = to_cell.piece
+        # print(piece)
 
         # Handle promotion
         if move.promote_to:
@@ -470,6 +471,9 @@ class Board:
 
         # Update en passant
         self.en_passant_target = None
+        if len(piece)<=2:
+            return
+        
         if piece[1] == 'p' and abs(int(from_cell.pos[1]) - int(to_cell.pos[1])) == 2:
             ep_rank = (int(from_cell.pos[1]) + int(to_cell.pos[1])) // 2
             self.en_passant_target = f"{from_cell.pos[0]}{ep_rank}"
