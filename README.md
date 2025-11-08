@@ -16,9 +16,9 @@ Stockshark's mission is simple: **learn chess engine development by actually bui
 ---
 
 ## 🧠 Current Capabilities (MVP Stage)
-- 🔲 Legal move generation
-- 🔲 Basic evaluation 
-- 🔲 Interactive play
+- ✅ Legal move generation
+- ✅ Basic evaluation 
+- ✅ Interactive play
 - 🔲 UCI support
 - 🔲 Opening book
 - 🔲 Time management
@@ -34,10 +34,7 @@ Stockshark's mission is simple: **learn chess engine development by actually bui
 *MAY CHANGE*
 stockshark/
 ├─ engine/
-│  ├─ simple_engine.py
-│  ├─ search.py 
-│  ├─ eval.py 
-│  └─ uci.py 
+│  └─ different versions of engine here
 ├─ tests/
 ├─ tools/
 ├─ README.md
@@ -48,9 +45,9 @@ stockshark/
 
 ## 🏁 Milestones (Progress Tracker)
 - [x] Initialize repository
-- [ ] Add basic engine
-- [ ] Add better evaluation
-- [ ] Add iterative deepening
+- [x] Add basic engine
+- [x] Add better evaluation
+- [x] Add iterative deepening
 - [ ] Add transposition table (Zobrist hashing)
 - [ ] Add move ordering
 - [ ] Build UCI support
