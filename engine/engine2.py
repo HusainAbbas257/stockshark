@@ -6,20 +6,21 @@ import tools.GUI as gui
 import random
 # Material table
 material_table = {
-    'P': 100, 'N': 320, 'B': 330, 'R': 500, 'Q': 900, 'K': 20000,
-    'p': -100, 'n': -320, 'b': -330, 'r': -500, 'q': -900, 'k': -20000,
+    'P': 100, 'N': 320, 'B': 330, 'R': 500, 'Q': 900, 'K': 2000,
+    'p': -100, 'n': -320, 'b': -330, 'r': -500, 'q': -900, 'k': -2000,
     'e': 0
 }
 
 class Engine:
     def __init__(self):
-        self.INITIAL_MATERIAL_FACTOR = 1.2
-        self.ATTACK_FACTOR = 1.1
-        self.DEFENCE_FACTOR=0.9
-        self.SQUARE_FACTOR = 0.25
-        self.KING_SAFETY_FACTOR = 1.2
+        self.INITIAL_MATERIAL_FACTOR = 1.5
+        self.ATTACK_FACTOR = 1.0
+        self.DEFENCE_FACTOR = 1.5
+        self.SQUARE_FACTOR = 0.05
+        self.KING_SAFETY_FACTOR = 2.5
+        self.HANGING_FACTOR = 1.7
         self.CENTER_FACTOR = 0.7
-        self.HANGING_FACTOR = 1.0 
+
 
     def count_material(self, board: gui.Board, FEN: str):
         """Calculate total material on the board.min:120,max:1800
@@ -53,8 +54,8 @@ class Engine:
                 eval_score=sum([(500-material_table[c.piece] )*ATTACK_FACTOR for c in attack])-sum([(-500+material_table[c.piece])*DEFENCE_FACTOR for c in defence])
                 
                 if abs(eval_score)>=100:
-                    penalty+=eval_score*HANGING_FACTOR
-                
+                    penalty+=(eval_score*HANGING_FACTOR)*(material_table[cell.piece]/100 if cell.piece!='e' in material_table else 0.1)
+                # now doesnt blunders 
         return penalty/64
     
 
@@ -63,17 +64,16 @@ class Engine:
             return []
 
         return board.show_moves(board.position_table['K'if color=='w' else 'k'])
-        # Mistake: assumes position_table['K'] exists, can crash if king captured which ofcoarce will not happen in real chess
-
+        
     def square_eval(self, board, color, FEN):
         b_king_sqs = self.king_squares(board, 'b')
         w_king_sqs = self.king_squares(board, 'w')
-        score = 0
+        score = []
         for row in board.grid:
             for cell in row:
                 if cell is None: continue
-                score += self.cell_eval(board, cell, color, FEN, b_king_sqs, w_king_sqs) * self.SQUARE_FACTOR
-        return max(-500, min(500, (score/64)*10))
+                score .append( self.cell_eval(board, cell, color, FEN, b_king_sqs, w_king_sqs) * self.SQUARE_FACTOR)
+        return max(score) if color=='w' else min(score)
 
     def cell_eval(self, board: gui.Board,cell:gui.cell,color:str,FEN:str, b_king_sqs, w_king_sqs):
         # Mistake: swapping ATTACK_FACTOR/DEFENCE_FACTOR inside each call → state mutation but we also want to have same logic for both colors so we keep it as is
@@ -115,10 +115,10 @@ class Engine:
     def eval(self, board: gui.Board=None, FEN: str="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"):
         if board is None:
             board = gui.Board(FEN=FEN)
-        eval_=self.count_material(board,FEN)
+        eval_=self.count_material(board,FEN)*self.INITIAL_MATERIAL_FACTOR
         eval_ += self.hanging_penalty(board, board.turn,FEN=FEN) * self.HANGING_FACTOR
         eval_+=self.square_eval(board,board.turn,FEN=FEN)
-        return eval_
+        return eval_/100
 
     def get_best_eval_move(self, board: gui.Board, FEN: str, count=3):
         """Get top count moves with slightly randomized selection"""
@@ -223,5 +223,269 @@ class Engine:
 if __name__ == "__main__":
     e=Engine()
     e.play_against_self()
-#  output:
 
+
+# sample games against stockfish :
+'''
+game1:
+Your Engine plays: b2b4
+Stockfish plays: a7a5
+Your Engine plays: b4a5
+Stockfish plays: g7g6
+Your Engine plays: d2d4
+Stockfish plays: f8g7
+Your Engine plays: d4d5
+Stockfish plays: g7a1
+Your Engine plays: d1d4
+Stockfish plays: a1d4
+Your Engine plays: e2e4
+Stockfish plays: d4f6
+Your Engine plays: c1e3
+Stockfish plays: d7d6
+Your Engine plays: f1e2
+Stockfish plays: a8a5
+Your Engine plays: b1d2
+Stockfish plays: b8d7
+Your Engine plays: d2f1
+Stockfish plays: h7h5
+Your Engine plays: f1d2
+Stockfish plays: a5a2
+Your Engine plays: d2b3
+Stockfish plays: e8f8
+Your Engine plays: e1f1
+Stockfish plays: g6g5
+Your Engine plays: e3g5
+Stockfish plays: f6g5
+Your Engine plays: e2h5
+Stockfish plays: h8h5
+Your Engine plays: c2c3
+Stockfish plays: d7f6
+Your Engine plays: g1e2
+Stockfish plays: f6e4
+Your Engine plays: e2d4
+Stockfish plays: a2f2
+Illegal move attempted by engine: c3c4
+Fallback move played: f1g1
+Stockfish plays: g5e3
+Illegal move attempted by engine: g1f2
+Fallback move played: h2h3
+Stockfish plays: f2e2
+Your Engine plays: g1f1
+Stockfish plays: e4g3
+Game Over
+Result: 0-1
+
+game2:
+Your Engine plays: g2g4
+Stockfish plays: d7d5
+Your Engine plays: g1f3
+Stockfish plays: b8c6
+Your Engine plays: a2a4
+Stockfish plays: c8g4
+Your Engine plays: f3h4
+Stockfish plays: e7e5
+Your Engine plays: e2e3
+Stockfish plays: g4d1
+Your Engine plays: e1d1
+Stockfish plays: d8h4
+Your Engine plays: f1e2
+Stockfish plays: a7a6
+Your Engine plays: h1g1
+Stockfish plays: h4h2
+Your Engine plays: g1g7
+Stockfish plays: h2h1
+Illegal move attempted by engine: g7g8
+Fallback move played: g7g1
+Stockfish plays: h1g1
+Illegal move attempted by engine: e2a6
+Fallback move played: e2f1
+Stockfish plays: g1f1
+Game Over
+Result: 0-1
+
+
+game3:
+Your Engine plays: b1c3
+Stockfish plays: d7d5
+Your Engine plays: c3e4
+Stockfish plays: d5e4
+Your Engine plays: g1f3
+Stockfish plays: b8c6
+Your Engine plays: h2h4
+Stockfish plays: h7h6
+Your Engine plays: a1b1
+Stockfish plays: g8f6
+Your Engine plays: b2b3
+Stockfish plays: e7e5
+Your Engine plays: f3g1
+Stockfish plays: f8e7
+Your Engine plays: c2c4
+Stockfish plays: a7a5
+Your Engine plays: h1h2
+Stockfish plays: c8g4
+Your Engine plays: d1c2
+Stockfish plays: e8g8
+Your Engine plays: c2d3
+Stockfish plays: e4d3
+Your Engine plays: e2e3
+Stockfish plays: f8e8
+Illegal move attempted by engine: e1e2
+Fallback move played: f2f3
+Stockfish plays: g4d7
+Your Engine plays: g1h3
+Stockfish plays: a5a4
+Your Engine plays: f1d3
+Stockfish plays: c6b4
+Your Engine plays: h3f2
+Stockfish plays: a4a3
+Your Engine plays: d3e4
+Stockfish plays: f6e4
+Your Engine plays: f3e4
+Stockfish plays: b4a2
+Your Engine plays: c1a3
+Stockfish plays: e7a3
+Your Engine plays: c4c5
+Stockfish plays: a2b4
+Your Engine plays: b1d1
+Stockfish plays: b4c2
+Illegal move attempted by engine: b3b4
+Fallback move played: e1f1
+Stockfish plays: g8h8
+Your Engine plays: f1g1
+Stockfish plays: c2e3
+Your Engine plays: d2e3
+Stockfish plays: a3c5
+Your Engine plays: d1a1
+Stockfish plays: a8a1
+Illegal move attempted by engine: h4h5
+Fallback move played: f2d1
+Stockfish plays: c5e3
+Illegal move attempted by engine: d1e3
+Fallback move played: g1f1
+Stockfish plays: d7b5
+Illegal move attempted by engine: d1e3
+Fallback move played: f1e1
+Stockfish plays: d8d1
+Game Over
+Result: 0-1
+
+game4:
+Your Engine plays: g2g4
+Stockfish plays: d7d5
+Your Engine plays: g1f3
+Stockfish plays: b8c6
+Your Engine plays: f3h4
+Stockfish plays: c8g4
+Your Engine plays: e2e3
+Stockfish plays: g4d1
+Your Engine plays: f1h3
+Stockfish plays: e7e6
+Your Engine plays: h3f1
+Stockfish plays: d8h4
+Your Engine plays: h1g1
+Stockfish plays: h4h2
+Your Engine plays: g1g7
+Stockfish plays: f8g7
+Your Engine plays: e1d1
+Stockfish plays: h2f2
+Your Engine plays: f1e2
+Stockfish plays: f2g1
+Illegal move attempted by engine: a2a4
+Fallback move played: e2f1
+Stockfish plays: g1f1
+Game Over
+Result: 0-1
+
+game5:
+Your Engine plays: b1c3
+Stockfish plays: d7d5
+Your Engine plays: c3d5
+Stockfish plays: d8d5
+Your Engine plays: a2a4
+Stockfish plays: e7e5
+Your Engine plays: g2g3
+Stockfish plays: d5h1
+Your Engine plays: h2h4
+Stockfish plays: h1g1
+Your Engine plays: a4a5
+Stockfish plays: f8d6
+Your Engine plays: c2c4
+Stockfish plays: c8d7
+Your Engine plays: d1a4
+Stockfish plays: d7a4
+Illegal move attempted by engine: f1h3
+Fallback move played: a1a2
+Stockfish plays: g1f1
+Your Engine plays: e1f1
+Stockfish plays: a4c6
+Your Engine plays: d2d3
+Stockfish plays: b8a6
+Your Engine plays: c1g5
+Stockfish plays: f7f6
+Your Engine plays: g5f6
+Stockfish plays: g8f6
+Your Engine plays: a2a1
+Stockfish plays: c6d7
+Your Engine plays: a1a2
+Stockfish plays: d7h3
+Illegal move attempted by engine: f1g2
+Fallback move played: f1e1
+Stockfish plays: e8g8
+Your Engine plays: a2a4
+Stockfish plays: h7h5
+Your Engine plays: a4a3
+Stockfish plays: a8e8
+Your Engine plays: a3c3
+Stockfish plays: h3d7
+Your Engine plays: c3b3
+Stockfish plays: a6c5
+Your Engine plays: b3b7
+Stockfish plays: c5b7
+Your Engine plays: b2b3
+Stockfish plays: f8f7
+Your Engine plays: e1d1
+Stockfish plays: b7a5
+Your Engine plays: d1e1
+Stockfish plays: d6b4
+Your Engine plays: e1d1
+Stockfish plays: a5b3
+Your Engine plays: f2f3
+Stockfish plays: b3d4
+Your Engine plays: d1c1
+Stockfish plays: d7e6
+Illegal move attempted by engine: c1d2
+Fallback move played: f3f4
+Stockfish plays: b4a3
+Illegal move attempted by engine: f4e5
+Fallback move played: c1d2
+Stockfish plays: e5f4
+Illegal move attempted by engine: d2e3
+Fallback move played: g3f4
+Stockfish plays: a3b4
+Your Engine plays: d2e3
+Stockfish plays: f6g4
+Illegal move attempted by engine: c4c5
+Fallback move played: e3e4
+Stockfish plays: e6f5
+Illegal move attempted by engine: e4f5
+Fallback move played: e4d4
+Stockfish plays: f7d7
+Game Over
+Result: 0-1
+
+'''
+
+
+'''
+problems observed:
+- engine makes illegal moves sometimes (probably due to wrong move conversion) should be fixed from tools.GUI side
+- engine blunders pieces sometimes (probably due to hanging penalty miscalculation)
+-takes long time for depth>3
+
+Suggestions for improvement in next version:
+- fix illegal move generation bug by remaking tools.GUI  in a highly optimized way
+-remove complex logic from square evaluation to make it faster and more human like
+-use minimax to make it stronger a little bit
+- add opening book
+and more...
+'''
