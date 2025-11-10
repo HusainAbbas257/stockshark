@@ -19,11 +19,11 @@ Stockshark's mission is simple: **learn chess engine development by actually bui
 - ✅ Legal move generation
 - ✅ Basic evaluation 
 - ✅ Interactive play
+- ✅ Move Ordering
+- ✅ Opening book
 - 🔲 UCI support
-- 🔲 Opening book
 - 🔲 Time management
 - 🔲 Transposition Table
-- 🔲 Move Ordering
 - 🔲 Quiescence Search
 
 ---
