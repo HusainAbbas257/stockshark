@@ -44,16 +44,20 @@ stockshark/
 ---
 
 ## 🏁 Milestones (Progress Tracker)
-- [x] Initialize repository
-- [x] Add basic engine
-- [x] Add better evaluation
-- [x] Add iterative deepening
-- [ ] Add transposition table (Zobrist hashing)
-- [ ] Add move ordering
-- [ ] Build UCI support
-- [ ] Benchmark vs other engines
-- [ ] Add opening book
-- [ ] Write documentation
+- [x] Initialize repository  
+- [x] Add basic engine  
+- [x] Add better evaluation  
+- [x] Add move ordering  
+- [x] Add iterative deepening  
+- [x] Add opening book  
+- [ ] Add transposition table (Zobrist hashing)  
+- [ ] Add quiescence search  
+- [ ] Add null-move pruning  
+- [ ] Add late move reductions (LMR)  
+- [ ] Add aspiration windows  
+- [ ] Build UCI support  
+- [ ] Benchmark vs other engines  
+- [ ] Write documentation  
 
 ---
 
