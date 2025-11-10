@@ -70,7 +70,7 @@ PIECE_SQUARE_TABLES = {
         -2, -3, -3, -4, -4, -3, -3, -2,
         -1, -2, -2, -2, -2, -2, -2, -1,
         2, 2, 0, 0, 0, 0, 2, 2,
-        2, 3, 1, 0, 0, 1, 3, 2
+        2, 3, 1, -1, -1, 1, 3, 2
     ]
 }
 
@@ -85,34 +85,36 @@ def ordered_moves(board):
         piece = board.piece_at(move.from_square)
         target = board.piece_at(move.to_square)
 
-        # MVV-LVA
-        if target:
-            score += 1000 + 10 * PIECE_VALUES[target.piece_type] - PIECE_VALUES[piece.piece_type]
-
-        # Promotions
+        # --- 1. Promotions ---
         if move.promotion:
-            score += 800 + PIECE_VALUES[move.promotion] * 10
+            score += 2000 + 10 * PIECE_VALUES[move.promotion]  # top priority
+            scores[move] = score
+            continue  # promotion always prioritized, skip rest
 
-        # Castling
+        # --- 2. Captures (MVV-LVA) ---
+        if target:
+            score += 1500 + 20 * PIECE_VALUES[target.piece_type] - PIECE_VALUES[piece.piece_type]
+
+        # --- 3. Castling ---
         if board.is_castling(move):
-            score += 500
+            score += 800  # strong safety + development
 
-        # Positional heuristic (lightweight)
-        score += get_positional_value(piece, move.to_square) * 0.5
+        # --- 4. Positional bonus ---
+        score += get_positional_value(piece, move.to_square) * 0.8
 
         scores[move] = score
 
+    # sort descending by total score
     return sorted(moves, key=lambda m: scores[m], reverse=True)
-
 
 # Add these constants near the top of your file
 POSITIONAL_CONSTANT = 0.20
 MOBILITY_CONSTANT = 0.05
 KING_SAFETY_CONSTANT = 0.2
 PASSED_PAWN_BONUS = 0.4
-TRAPPED_PENALTY = 0.5
+TRAPPED_PENALTY = 0.1
 KING_ATTACK_WEIGHT = 0.4  
-MATE_THREAT_BONUS = 1.0
+MATE_THREAT_BONUS = 1.00
 
 
 
@@ -127,28 +129,47 @@ def get_positional_value(piece, square):
     return table[idx] * POSITIONAL_CONSTANT
 
 def king_safety(board: 'chess.Board'):
-    """
-    Evaluates king safety: more attackers near king = worse.
-    Positive = white safer, negative = black safer.
-    """
     score = 0.0
     for color in (chess.WHITE, chess.BLACK):
         king_sq = board.king(color)
-        if king_sq is None:
+        enemy_king_sq = board.king(not color)
+        if king_sq is None or enemy_king_sq is None:
             continue
 
-        # squares in 1-square radius around king
-        danger_zone = [sq for sq in chess.SQUARES if chess.square_distance(sq, king_sq) <= 1]
+        for target_king, sign in [(king_sq, 1), (enemy_king_sq, -1)]:
+            danger_zone = [sq for sq in chess.SQUARES if chess.square_distance(sq, target_king) <= 1]
+            danger = 0.0
+            defend = 0.0
 
-        # count enemy attacks on those squares
-        danger = sum(1 for sq in danger_zone if board.is_attacked_by(not color, sq))
+            for sq in danger_zone:
+                # enemy attacks
+                for attacker in board.attackers(not color, sq):
+                    piece = board.piece_at(attacker)
+                    if piece:
+                        danger += 1 / PIECE_VALUES[piece.piece_type]
 
-        # each attack near king slightly hurts that color
-        penalty = danger * KING_SAFETY_CONSTANT
-        score += -penalty if color == chess.WHITE else penalty  # white exposed → negative
+                # friendly defenders
+                for defender in board.attackers(color, sq):
+                    piece = board.piece_at(defender)
+                    if piece:
+                        defend += 1 / PIECE_VALUES[piece.piece_type]
+
+            net = (danger - defend) * KING_SAFETY_CONSTANT
+            score += sign * (-net if color == chess.WHITE else net)
 
     return score
 
+
+def safe_mobility(board, color):
+    moves = list(board.legal_moves)
+    count = 0
+    for move in moves:
+        if board.piece_at(move.from_square).color != color:
+            continue
+        # if destination is not attacked by enemy
+        if not board.is_attacked_by(not color, move.to_square):
+            count += 1
+    return count
 
 def evaluate_board(board: 'chess.Board'):
     """
@@ -170,14 +191,11 @@ def evaluate_board(board: 'chess.Board'):
             value -= get_positional_value(board.piece_at(sq), sq)
 
     # --- Mobility ---
-    tmp = board.copy()
-    tmp.turn = chess.WHITE
-    mobility_white = len(list(tmp.legal_moves))
-    tmp.turn = chess.BLACK
-    mobility_black = len(list(tmp.legal_moves))
+    mobility_white = safe_mobility(board, chess.WHITE)
+    mobility_black = safe_mobility(board, chess.BLACK)
     value += MOBILITY_CONSTANT * (mobility_white - mobility_black)
 
-    # --- King Safety ---
+    # --- King Safety (includes proximity + defense logic)
     value += king_safety(board)
 
     # --- Passed Pawns ---
@@ -186,9 +204,19 @@ def evaluate_board(board: 'chess.Board'):
             file = chess.square_file(sq)
             rank = chess.square_rank(sq)
             enemy_pawns = board.pieces(chess.PAWN, not color)
-            same_file_enemy = any(chess.square_file(p) == file for p in enemy_pawns)
-            if not same_file_enemy:
-                bonus = PASSED_PAWN_BONUS * (rank if color == chess.WHITE else 7 - rank)
+
+            def ahead(p):
+                return (chess.square_rank(p) > rank if color == chess.WHITE 
+                        else chess.square_rank(p) < rank)
+
+            blocked = any(
+                abs(chess.square_file(p) - file) <= 1 and ahead(p)
+                for p in enemy_pawns
+            )
+
+            if not blocked:
+                progress = rank if color == chess.WHITE else 7 - rank
+                bonus = PASSED_PAWN_BONUS * (1 + 0.1 * progress)
                 value += bonus if color == chess.WHITE else -bonus
 
     # --- Trapped pieces ---
@@ -203,17 +231,6 @@ def evaluate_board(board: 'chess.Board'):
     # --- Mate threat ---
     if board.is_check():
         value += MATE_THREAT_BONUS * (1 if board.turn == chess.BLACK else -1)
-
-    # --- King attacks proximity ---
-    for color in (chess.WHITE, chess.BLACK):
-        king_sq = board.king(not color)
-        if king_sq is None:
-            continue
-        attackers = sum(
-            1 for sq in board.attacks(king_sq)
-            if board.piece_at(sq) and board.piece_at(sq).color == color
-        )
-        value += KING_ATTACK_WEIGHT * attackers * (1 if color == chess.WHITE else -1)
 
     return round(value, 2)
 
@@ -353,3 +370,4 @@ class Engine:
 if __name__ == "__main__":
     e=Engine('data/opening.json')
     e.self_play(3)
+    # e.play_against_human(3)

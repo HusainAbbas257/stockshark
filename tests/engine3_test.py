@@ -12,7 +12,7 @@ def compare_with_stockfish(fen_positions, depth=3, sf_depth=10):
 
     for name, fen in fen_positions.items():
         board = chess.Board(fen)
-        print(f"\n{name}:")
+        print(f"\n{name}:{fen}")
         e=Engine()
         # Your engine's move
         my_move = e.find_best_move(board, depth)
