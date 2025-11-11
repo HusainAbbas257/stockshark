@@ -37,6 +37,37 @@ def compare_with_stockfish(fen_positions, depth=3, sf_depth=10):
     print(f"\nOverall Accuracy: {accuracy:.1f}%")
     return accuracy
 
+def compare_eval_with_stockfish(fen_positions, sf_depth=10):
+    engine_path = r"tests\stockfish\stockfish-windows-x86-64.exe"  # change this path
+    stockfish = chess.engine.SimpleEngine.popen_uci(engine_path)
+
+    diffs = []
+    for name, fen in fen_positions.items():
+        board = chess.Board(fen)
+        print(f"\n{name}: {fen}")
+
+        # --- Stockfish Eval ---
+        info = stockfish.analyse(board, chess.engine.Limit(depth=sf_depth))
+        sf_score = info["score"].white().score(mate_score=10000)
+        if sf_score is None:
+            sf_score = 0
+
+        # --- Your Eval ---
+        my_score = evaluate_board(board) * 100  # scale roughly to centipawns
+
+        # --- Difference ---
+        diff = abs(sf_score - my_score)
+        diffs.append(diff)
+
+        print(f"  Stockfish Eval: {sf_score:.1f}")
+        print(f"  Your Eval:      {my_score:.1f}")
+        print(f"  Difference:     {diff:.1f}")
+
+    stockfish.quit()
+    avg_diff = sum(diffs) / len(diffs)
+    print(f"\nAverage Difference: {avg_diff:.1f} centipawns")
+    return avg_diff
+
 
 if __name__ == "__main__":
     tests = {
@@ -101,4 +132,5 @@ if __name__ == "__main__":
 }
 
 
-    compare_with_stockfish(tests, depth=3, sf_depth=10)
+    # compare_with_stockfish(tests, depth=3, sf_depth=10)
+    compare_eval_with_stockfish(tests, sf_depth=1)
