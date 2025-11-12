@@ -67,42 +67,120 @@ piece_square_table= {
             -4,   3, -14, -50, -57, -18,  13,   4,
             17,  30,  -3, -14,   6,  -1,  40,  18),
 }
-def evaluate(board: 'chess.Board'):
-    value = 0
-    for piece_type, val in PIECE_VALUES.items():
-        whites = board.pieces(piece_type, chess.WHITE)
-        blacks = board.pieces(piece_type, chess.BLACK)
+def evaluate(board: 'chess.Board', phase_weight=0.8):
+    """
+    Evaluates the board state with simplified metrics: material, positional, king safety, and activity.
 
-        # Material count
-        value += len(whites) * val - len(blacks) * val
+    Args:
+        board (chess.Board): Current chess board state.
+        phase_weight (float): Game phase weight (0.0 = endgame, 1.0 = opening).
 
-        # Positional count (without adding material again)
-        for sq in whites:
-            value += piece_square_table[piece_type][sq]
-        for sq in blacks:
-            value -= piece_square_table[piece_type][63 - sq]
-    return value
+    Returns:
+        int: Evaluation score (positive for White, negative for Black).
+    """
+    #### GLOBAL CONSTANTS FOR TUNING ####
+    KING_SAFETY_WEIGHT = 50  # Importance of king safety
+    MOBILITY_WEIGHT = 0.1    # Importance of mobility
+
+    #### INITIALIZE SCORES ####
+    total_material = 0      # Material score for both sides
+    total_positional = 0    # Positional score from piece-square tables
+    total_king_safety = 0   # King safety penalties or bonuses
+    total_mobility = 0      # Mobility score based on the number of legal moves
+
+    #### MATERIAL AND POSITIONAL VALUES ####
+    for piece_type, value in PIECE_VALUES.items():
+        white_pieces = board.pieces(piece_type, chess.WHITE)
+        black_pieces = board.pieces(piece_type, chess.BLACK)
+
+        # Material score
+        white_material = len(white_pieces) * value
+        black_material = len(black_pieces) * value
+        total_material += white_material - black_material
+
+        # Positional value based on piece-square tables
+        for square in white_pieces:
+            total_positional += piece_square_table[piece_type][square]
+        for square in black_pieces:
+            mirrored_square = chess.square_mirror(square)
+            total_positional -= piece_square_table[piece_type][mirrored_square]
+
+    #### KING SAFETY ####
+    # Penalize positions where the king is in check
+    if board.is_check():
+        if board.turn == chess.WHITE:
+            total_king_safety -= KING_SAFETY_WEIGHT
+        else:
+            total_king_safety += KING_SAFETY_WEIGHT
+
+    #### MOBILITY ####
+    # Mobility is the number of legal moves available to the current player
+    legal_moves = len(list(board.legal_moves))
+    if board.turn == chess.WHITE:
+        total_mobility += legal_moves * MOBILITY_WEIGHT
+    else:
+        total_mobility -= legal_moves * MOBILITY_WEIGHT
+
+    #### FINAL EVALUATION ####
+    # Combine scores with weights for material and positional evaluation
+    evaluation = (
+        total_material +                # Material is always important
+        total_positional * phase_weight +  # Positional importance depends on phase
+        total_king_safety * phase_weight + # King safety is more important in early phases
+        total_mobility * phase_weight     # Mobility is more important in early phases
+    )
+    
+    return evaluation
 
 def ordered_moves(board: 'chess.Board'):
-    moves = board.legal_moves
+    """
+    Orders legal moves based on a heuristic score for search optimization.
+    
+    Parameters:
+        board (chess.Board): The current chess board.
+
+    Returns:
+        list[chess.Move]: A list of legal moves sorted in decreasing order of priority.
+    """
+
+    # Ensure piece values are defined; KEY = piece_type, VALUE = relative piece value
+    PIECE_VALUES = {
+        chess.PAWN: 1,
+        chess.KNIGHT: 3,
+        chess.BISHOP: 3,
+        chess.ROOK: 5,
+        chess.QUEEN: 9,
+        chess.KING: 0  # King isn't typically weighted
+    }
+
     move_scores = []
 
-    for move in moves:
+    for move in board.legal_moves:
         score = 0
         target = board.piece_at(move.to_square)
 
-        # promotions first
+        # Promotions get the highest priority
         if move.promotion:
             score += 10_000
+
+        # Captures, weighted by MVV-LVA (Most Valuable Victim - Least Valuable Attacker)
         elif target:
-            # MVV-LVA simplified
-            score += 1000 * PIECE_VALUES[target.piece_type]
+            attacker = board.piece_at(move.from_square)
+            victim_value = PIECE_VALUES[target.piece_type]
+            attacker_value = PIECE_VALUES[attacker.piece_type] if attacker else 1  # Assume attacker is pawn if absent
+            score += 1000 * victim_value - attacker_value
+
+        # Castling has moderate priority
         elif board.is_castling(move):
-            score += 300
+            score += 500
+
+        # Center control moves (optional: prioritize moves to central squares)
+        elif move.to_square in [chess.D4, chess.D5, chess.E4, chess.E5]:
+            score += 100  # Slightly prioritize controlling the center
 
         move_scores.append((score, move))
 
-    # sort only once — O(n log n)
+    # Sort moves by their scores in descending order
     move_scores.sort(reverse=True, key=lambda x: x[0])
     return [m for _, m in move_scores]
 

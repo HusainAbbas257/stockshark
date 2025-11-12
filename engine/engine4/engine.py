@@ -3,65 +3,142 @@ from evaluation import evaluate as evaluate_board
 from evaluation import ordered_moves
 
 
-
 class Engine:
-    def minimax(self, board: 'chess.Board', depth, maximizingPlayer, alpha=float('-inf'), beta=float('inf')):
-        if depth == 0 or board.is_game_over():
-            val = evaluate_board(board)
-            return val if maximizingPlayer else -val
+    def minimax(self, board: 'chess.Board', depth, maximizing_color, alpha=float('-inf'), beta=float('inf')):
+        """
+        Minimax function with alpha-beta pruning and ordered moves to evaluate chess positions.
+        """
 
-        for move in ordered_moves(board):
-            b = board.copy()
-            b.push(move)
+        # Checkmate (depth-sensitive)
+        if board.is_checkmate():
+            # Depth-sensitive value to prioritize faster checkmates or slower losses
+            return (float('inf') + depth) if board.turn == maximizing_color else (float('-inf') - depth)
 
-            val = self.minimax(b, depth - 1, not maximizingPlayer, alpha, beta)
+        # Draw conditions
+        if board.is_stalemate() or board.is_fivefold_repetition() or board.is_insufficient_material():
+            return 0.0
 
-            if maximizingPlayer:
-                alpha = max(alpha, val)
-                if alpha >= beta:
-                    break  # beta cut-off
-            else:
-                beta = min(beta, val)
-                if beta <= alpha:
-                    break  # alpha cut-off
+        # Leaf node evaluation
+        if depth == 0:
+            return evaluate_board(board)  # Ensure evaluate_board is properly implemented
 
-        return alpha if maximizingPlayer else beta
+        # Retrieve ordered moves
+        moves = ordered_moves(board)  # Use the `ordered_moves(board)` function to sort legal moves
 
+        # MAXIMIZING
+        if board.turn == maximizing_color:
+            max_eval = float('-inf')
+            for move in moves:
+                board.push(move)
+                eval = self.minimax(board, depth - 1, maximizing_color, alpha, beta)
+                board.pop()
+                max_eval = max(max_eval, eval)
+                alpha = max(alpha, eval)
+                if beta <= alpha:  # Beta cutoff
+                    break
+            return max_eval
 
-    def best_move(self, board: chess.Board, depth=3):
-        best_val = -float('inf') if board.turn == chess.WHITE else float('inf')
+        # MINIMIZING
+        else:
+            min_eval = float('inf')
+            for move in moves:
+                board.push(move)
+                eval = self.minimax(board, depth - 1, maximizing_color, alpha, beta)
+                board.pop()
+                min_eval = min(min_eval, eval)
+                beta = min(beta, eval)
+                if beta <= alpha:  # Alpha cutoff
+                    break
+            return min_eval
+    def best_move(self, board: 'chess.Board', depth):
+        """
+        Finds the best move for the current player using the minimax algorithm with alpha-beta pruning.
+        
+        Args:
+            board (chess.Board): Current chess board state.
+            depth (int): Depth for the minimax search.
+
+        Returns:
+            tuple: Best move and its evaluation score.
+        """
+        maximizing_color = board.turn  # Determine if the current player is maximizing or minimizing
+        best_val = float('-inf') if maximizing_color else float('inf')
         best_move = None
 
-        for move in board.legal_moves:
-            b = board.copy()
-            b.push(move)
-            value = self.minimax(b, depth - 1, not board.turn)  # switch player
+        # Use ordered_moves(board) to prioritize move evaluation (e.g., captures, promotions)
+        moves = ordered_moves(board)
 
-            if board.turn == chess.WHITE and value > best_val:
-                best_val = value
+        for move in moves:
+            board.push(move)  # Make the move
+            eval_val = self.minimax(board, depth - 1, maximizing_color, alpha=float('-inf'), beta=float('inf'))
+            board.pop()  # Undo the move
+
+            if maximizing_color and eval_val > best_val:  # Maximizing player
+                best_val = eval_val
                 best_move = move
-            elif board.turn == chess.BLACK and value < best_val:
-                best_val = value
+            elif not maximizing_color and eval_val < best_val:  # Minimizing player
+                best_val = eval_val
                 best_move = move
 
-        return best_move  
+        return best_move, best_val
+
 
     def self_play(self, depth=3, max_moves=150):
-        moves=[]
+        print("\n=== SELF PLAY START ===\n")
+        moves = []
         board = chess.Board()
         move_num = 1
+
         while not board.is_game_over() and move_num <= max_moves:
-            move = self.best_move(board, depth)
+            print(f"\n--- Move {move_num} ({'White' if board.turn else 'Black'}) ---")
+            move,val = self.best_move(board, depth)
             if move is None:
-                print("No legal move found even randomly.")
+                print("No legal move found.")
                 break
-            moves.append(move)
-            print(f"Move {move_num}: {'White' if board.turn else 'Black'} plays {move}")
+
+            moves.append(move.uci())
+            print(f"Playing: {move} wit eval={val}")
             board.push(move)
+            # print(board)
+
+            if board.is_fivefold_repetition() or board.is_stalemate():
+                print("Draw by repetition or stalemate.")
+                break
+
             move_num += 1
-        print("Game over:", board.result())
-        print(moves)
+
+        print("\n=== GAME OVER ===")
+        print("Result:", board.result())
+        print("Move sequence:", moves)
+
+
+    def play_against_human(self, color=chess.WHITE, depth=3):
+        print("\n=== HUMAN VS AI ===\n")
+        board = chess.Board()
+        print(board)
+
+        while not board.is_game_over():
+            if board.turn == color:
+                print("AI thinking...")
+                move = self.best_move(board, depth)
+                print(f"AI plays: {move}")
+                board.push(move)
+            else:
+                print("Your turn!")
+                user_move = input("Enter move (e.g. e2e4): ")
+                try:
+                    board.push_uci(user_move)
+                except:
+                    print("Invalid move, try again.")
+                    continue
+            print(board)
+
+        print("\n=== GAME OVER ===")
+        print("Result:", board.result())
+
 
 if __name__ == "__main__":
-    e=Engine()
-    e.self_play(4,50)
+    e = Engine()
+    e.self_play(3, 50)
+    # b=chess.Board('7Q/6B1/8/3N4/1p6/kP6/2K5/8 w - - 6 7')
+    # print(e.best_move(b,5))
