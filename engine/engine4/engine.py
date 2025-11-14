@@ -196,7 +196,13 @@ class Engine:
 
             for move in moves:
                 board.push(move)
-                eval_score = self.minimax(board, depth - 1, False, alpha, beta)
+                if board.is_check() and depth<8:
+                    eval_score = self.minimax(board, depth+1, False, alpha, beta)
+                    
+                elif board.is_capture(move) and depth<8:
+                    eval_score = self.minimax(board, depth, False, alpha, beta)
+                else:
+                    eval_score = self.minimax(board, depth-1, False, alpha, beta)
                 board.pop()
 
                 if eval_score > max_eval:
@@ -229,7 +235,12 @@ class Engine:
 
             for move in moves:
                 board.push(move)
-                eval_score = self.minimax(board, depth - 1, True, alpha, beta)
+                if board.is_check() and depth<8:
+                    eval_score = self.minimax(board, depth + 1, True, alpha, beta)
+                elif board.is_capture(move) and depth<8:
+                    eval_score = self.minimax(board, depth , True, alpha, beta)
+                else:
+                    eval_score = self.minimax(board, depth - 1, True, alpha, beta)
                 board.pop()
 
                 if eval_score < min_eval:
