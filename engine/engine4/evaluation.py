@@ -95,8 +95,9 @@ def evaluate(board: 'chess.Board') -> float:
     # CONFIGURATION - Tunable weights for different evaluation factors
     # =============================================================================
     
-    KING_SAFETY_WEIGHT = 30    # Penalty for being in check (in centipawns)
+    KING_SAFETY_WEIGHT = 10    # Penalty for being in check (in centipawns)
     MOBILITY_WEIGHT = 0.1      # Weight per legal move available
+    MATE_VALUE = 999999     #constant for expressing mate value
     
     # =============================================================================
     # SCORE ACCUMULATORS - Track different aspects of position
@@ -111,6 +112,10 @@ def evaluate(board: 'chess.Board') -> float:
     # MATERIAL & POSITIONAL EVALUATION
     # =============================================================================
     
+    # returning infinity breaks the alpha beta pruning
+    if board.is_checkmate():
+        return -MATE_VALUE if board.turn else MATE_VALUE
+
     # Iterate through each piece type (pawn, knight, bishop, rook, queen, king)
     for piece_type, value in PIECE_VALUES.items():
         # Get all pieces of this type for both colors
@@ -151,14 +156,13 @@ def evaluate(board: 'chess.Board') -> float:
     
     # More legal moves = more tactical options and flexibility
     # Count legal moves for the side to move
-    legal_move_count = board.legal_moves.count()
-    
-    # Add bonus if White to move, subtract if Black to move
-    if board.turn == chess.WHITE:
-        mobility_score = legal_move_count * MOBILITY_WEIGHT
-    else:
-        mobility_score = -legal_move_count * MOBILITY_WEIGHT
-    
+    white_moves = len(list(board.legal_moves))
+    board.push(chess.Move.null())
+    black_moves = len(list(board.legal_moves))
+    board.pop()
+
+    mobility_score = (white_moves - black_moves) * MOBILITY_WEIGHT
+
     # =============================================================================
     # COMBINE ALL FACTORS
     # =============================================================================
@@ -368,4 +372,4 @@ if __name__ == "__main__":
     b=chess.Board()
     for name in tests:
         b.set_fen(tests[name])
-        print(f'{name}-->{evaluate(b)}')
+        print(f'{name}:{tests[name]}-->{evaluate(b)}')
