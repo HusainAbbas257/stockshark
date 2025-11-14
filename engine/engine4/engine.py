@@ -109,6 +109,63 @@ class Engine:
         if entry is None or depth >= entry[1]:
             self.tt[key] = (value, depth, flag)
 
+    def is_calm(self, board):
+        if board.is_check():
+            return False
+
+        for move in board.legal_moves:
+            if board.is_capture(move):
+                return False
+
+        return True
+
+    def is_good_capture(self, board, move):
+        piece_from = board.piece_at(move.from_square)
+        piece_to = board.piece_at(move.to_square)
+
+        if not piece_from or not piece_to:
+            return False
+
+        # Only search captures where you take equal or higher value
+        return piece_to.piece_type >= piece_from.piece_type
+
+
+
+    def quiescence(self, board, alpha, beta, depth=0, max_q=4):
+            # stop if too deep
+        if depth >= max_q:
+            return evaluate_board(board)
+
+        stand_pat = evaluate_board(board)
+
+        # Beta-cutoff (fail hard)
+        if stand_pat >= beta:
+            return beta
+
+        # Raise alpha (fail soft)
+        if stand_pat > alpha:
+            alpha = stand_pat
+
+        # Only search good captures
+        for move in board.legal_moves:
+            if not board.is_capture(move):
+                continue
+
+            # optional: skip stupid sacrifices
+            if not self.is_good_capture(board, move):
+                continue
+
+            board.push(move)
+            score = -self.quiescence(board, -beta, -alpha, depth + 1, max_q)
+            board.pop()
+
+            if score >= beta:
+                return beta
+            if score > alpha:
+                alpha = score
+
+        return alpha
+
 
     def minimax(self, board: 'chess.Board', depth: int, is_maximizing: bool, alpha: float = float('-inf'), beta: float = float('inf'),depth_count=1) -> float:
         """
@@ -159,8 +216,9 @@ class Engine:
         # When depth reaches 0, evaluate the position statically
         # This is the base case for the recursion
         if depth == 0:
-            return evaluate_board(board)
-        
+            return self.quiescence(board, alpha, beta)
+
+
         
         
         
@@ -196,11 +254,9 @@ class Engine:
 
             for move in moves:
                 board.push(move)
-                if board.is_check() and depth_count<6:
-                    eval_score = self.minimax(board, depth, False, alpha, beta,depth_count+1)
-                else:
-                    eval_score = self.minimax(board, depth-1, False, alpha, beta,depth_count+1)
+                eval_score = self.minimax(board, depth-1, False, alpha, beta)
                 board.pop()
+
 
                 if eval_score > max_eval:
                     max_eval = eval_score
@@ -232,10 +288,7 @@ class Engine:
 
             for move in moves:
                 board.push(move)
-                if board.is_check() and depth_count<6:
-                    eval_score = self.minimax(board, depth + 1, True, alpha, beta,depth_count+1)
-                else:
-                    eval_score = self.minimax(board, depth - 1, True, alpha, beta,depth_count+1)
+                eval_score = self.minimax(board, depth - 1, True, alpha, beta,depth_count+1)
                 board.pop()
 
                 if eval_score < min_eval:
