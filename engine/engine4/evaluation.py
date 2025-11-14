@@ -67,123 +67,243 @@ piece_square_table= {
             -4,   3, -14, -50, -57, -18,  13,   4,
             17,  30,  -3, -14,   6,  -1,  40,  18),
 }
-def evaluate(board: 'chess.Board', phase_weight=0.8):
+def evaluate(board: 'chess.Board') -> float:
     """
-    Evaluates the board state with simplified metrics: material, positional, king safety, and activity.
-
+    Static evaluation function for chess positions.
+    
+    Combines multiple heuristics to estimate the advantage of one side over another
+    without searching deeper. Higher positive scores indicate White's advantage,
+    negative scores indicate Black's advantage.
+    
     Args:
-        board (chess.Board): Current chess board state.
-        phase_weight (float): Game phase weight (0.0 = endgame, 1.0 = opening).
-
+        board: Current chess board state to evaluate
+    
     Returns:
-        int: Evaluation score (positive for White, negative for Black).
+        float: Evaluation score in centipawns (100 = 1 pawn advantage)
+            - Positive: White is better
+            - Negative: Black is better
+            - Zero: Equal position
+    
+    Evaluation components:
+        1. Material: Piece values (Queen=900, Rook=500, etc.)
+        2. Positional: Piece-square tables reward good piece placement
+        3. King Safety: Penalties for being in check
+        4. Mobility: Bonus for having more legal moves (activity)
     """
-    #### GLOBAL CONSTANTS FOR TUNING ####
-    KING_SAFETY_WEIGHT = 50  # Importance of king safety
-    MOBILITY_WEIGHT = 0.1    # Importance of mobility
-
-    #### INITIALIZE SCORES ####
-    total_material = 0      # Material score for both sides
-    total_positional = 0    # Positional score from piece-square tables
-    total_king_safety = 0   # King safety penalties or bonuses
-    total_mobility = 0      # Mobility score based on the number of legal moves
-
-    #### MATERIAL AND POSITIONAL VALUES ####
+    
+    # =============================================================================
+    # CONFIGURATION - Tunable weights for different evaluation factors
+    # =============================================================================
+    
+    KING_SAFETY_WEIGHT = 30    # Penalty for being in check (in centipawns)
+    MOBILITY_WEIGHT = 0.1      # Weight per legal move available
+    
+    # =============================================================================
+    # SCORE ACCUMULATORS - Track different aspects of position
+    # =============================================================================
+    
+    material_score = 0      # Total material difference (White - Black)
+    positional_score = 0    # Positional bonuses from piece placement
+    king_safety_score = 0   # King safety penalties
+    mobility_score = 0      # Advantage from having more moves available
+    
+    # =============================================================================
+    # MATERIAL & POSITIONAL EVALUATION
+    # =============================================================================
+    
+    # Iterate through each piece type (pawn, knight, bishop, rook, queen, king)
     for piece_type, value in PIECE_VALUES.items():
+        # Get all pieces of this type for both colors
         white_pieces = board.pieces(piece_type, chess.WHITE)
         black_pieces = board.pieces(piece_type, chess.BLACK)
-
-        # Material score
-        white_material = len(white_pieces) * value
-        black_material = len(black_pieces) * value
-        total_material += white_material - black_material
-
-        # Positional value based on piece-square tables
+        
+        # Calculate material difference
+        # Positive if White has more/better pieces, negative if Black does
+        material_score += (len(white_pieces) - len(black_pieces)) * value
+        
+        # Evaluate White's piece placement using piece-square tables
+        # PST gives bonuses for pieces on good squares (e.g., knights in center)
         for square in white_pieces:
-            total_positional += piece_square_table[piece_type][square]
+            positional_score += piece_square_table[piece_type][square]
+        
+        # Evaluate Black's piece placement
+        # Mirror the board (flip vertically) since PST is designed for White's perspective
         for square in black_pieces:
             mirrored_square = chess.square_mirror(square)
-            total_positional -= piece_square_table[piece_type][mirrored_square]
-
-    #### KING SAFETY ####
-    # Penalize positions where the king is in check
+            positional_score -= piece_square_table[piece_type][mirrored_square]
+    
+    # =============================================================================
+    # KING SAFETY EVALUATION
+    # =============================================================================
+    
+    # Being in check is dangerous and should be penalized
     if board.is_check():
+        # If White is in check, subtract penalty (bad for White)
+        # If Black is in check, add bonus (good for White)
         if board.turn == chess.WHITE:
-            total_king_safety -= KING_SAFETY_WEIGHT
+            king_safety_score = -KING_SAFETY_WEIGHT
         else:
-            total_king_safety += KING_SAFETY_WEIGHT
-
-    #### MOBILITY ####
-    # Mobility is the number of legal moves available to the current player
-    legal_moves = len(list(board.legal_moves))
+            king_safety_score = KING_SAFETY_WEIGHT
+    
+    # =============================================================================
+    # MOBILITY EVALUATION
+    # =============================================================================
+    
+    # More legal moves = more tactical options and flexibility
+    # Count legal moves for the side to move
+    legal_move_count = board.legal_moves.count()
+    
+    # Add bonus if White to move, subtract if Black to move
     if board.turn == chess.WHITE:
-        total_mobility += legal_moves * MOBILITY_WEIGHT
+        mobility_score = legal_move_count * MOBILITY_WEIGHT
     else:
-        total_mobility -= legal_moves * MOBILITY_WEIGHT
-
-    #### FINAL EVALUATION ####
-    # Combine scores with weights for material and positional evaluation
-    evaluation = (
-        total_material +                # Material is always important
-        total_positional * phase_weight +  # Positional importance depends on phase
-        total_king_safety * phase_weight + # King safety is more important in early phases
-        total_mobility * phase_weight     # Mobility is more important in early phases
+        mobility_score = -legal_move_count * MOBILITY_WEIGHT
+    
+    # =============================================================================
+    # COMBINE ALL FACTORS
+    # =============================================================================
+    
+    # Sum all evaluation components
+    # Material is the dominant factor, others provide fine-tuning
+    total_evaluation = (
+        material_score +      # Dominant factor: piece count and value
+        positional_score +    # Piece placement quality
+        king_safety_score +   # King safety considerations
+        mobility_score        # Tactical flexibility
     )
     
-    return evaluation
-
-def ordered_moves(board: 'chess.Board'):
+    return total_evaluation
+def ordered_moves(board: 'chess.Board') -> list:
     """
-    Orders legal moves based on a heuristic score for search optimization.
+    Orders legal moves using heuristic scoring to optimize alpha-beta pruning.
     
-    Parameters:
-        board (chess.Board): The current chess board.
-
+    Move ordering is critical for search efficiency. By examining likely-good moves first
+    (captures, promotions, checks), alpha-beta pruning can eliminate more branches earlier,
+    significantly reducing the search tree size. Good move ordering can improve search
+    speed by 3-10x in typical positions.
+    
+    Ordering strategy (highest to lowest priority):
+        1. Promotions (especially to Queen) - typically game-changing
+        2. Captures using MVV-LVA (Most Valuable Victim - Least Valuable Attacker)
+           - Prefer capturing high-value pieces with low-value pieces
+           - Example: Pawn takes Queen (score ~9000) > Queen takes Pawn (score ~900)
+        3. Castling moves - important strategic moves
+        4. Center control - moves to central squares (e4, e5, d4, d5)
+        5. Other quiet moves - remaining non-tactical moves
+    
+    Args:
+        board: Current chess board state containing legal moves to order
+    
     Returns:
-        list[chess.Move]: A list of legal moves sorted in decreasing order of priority.
+        list[chess.Move]: Legal moves sorted by heuristic score (best first)
+    
+    Time Complexity: O(n log n) where n is the number of legal moves
+    Space Complexity: O(n) for storing move-score pairs
     """
-
-    # Ensure piece values are defined; KEY = piece_type, VALUE = relative piece value
+    
+    # =============================================================================
+    # PIECE VALUE CONSTANTS - Standard relative piece values in pawns
+    # =============================================================================
+    
     PIECE_VALUES = {
-        chess.PAWN: 1,
-        chess.KNIGHT: 3,
-        chess.BISHOP: 3,
-        chess.ROOK: 5,
-        chess.QUEEN: 9,
-        chess.KING: 0  # King isn't typically weighted
+        chess.PAWN: 1,      # Base unit of material
+        chess.KNIGHT: 3,    # Minor piece
+        chess.BISHOP: 3,    # Minor piece (slightly better than knight in open positions)
+        chess.ROOK: 5,      # Major piece
+        chess.QUEEN: 9,     # Most powerful piece
+        chess.KING: 0       # King has no exchange value (cannot be captured)
     }
-
-    move_scores = []
-
+    
+    # =============================================================================
+    # HEURISTIC SCORE RANGES - Priority ordering for different move types
+    # =============================================================================
+    
+    PROMOTION_BONUS = 10_000      # Promotions almost always critical
+    CAPTURE_BASE_SCORE = 1_000    # Base score for captures (scaled by MVV-LVA)
+    CASTLING_BONUS = 500          # Castling is strategically important
+    CENTER_CONTROL_BONUS = 100    # Slight bonus for central presence
+    
+    # Center squares (the four most important central squares)
+    CENTER_SQUARES = {chess.D4, chess.D5, chess.E4, chess.E5}
+    
+    # =============================================================================
+    # MOVE SCORING LOOP
+    # =============================================================================
+    
+    move_scores = []  # List of (score, move) tuples
+    
     for move in board.legal_moves:
-        score = 0
-        target = board.piece_at(move.to_square)
-
-        # Promotions get the highest priority
+        score = 0  # Initialize score for this move
+        
+        # Get the piece at the destination square (None if empty)
+        target_piece = board.piece_at(move.to_square)
+        
+        # ---------------------------------------------------------------------
+        # PRIORITY 1: PROMOTIONS
+        # ---------------------------------------------------------------------
+        # Pawn reaching the back rank and promoting (usually to Queen)
         if move.promotion:
-            score += 10_000
-
-        # Captures, weighted by MVV-LVA (Most Valuable Victim - Least Valuable Attacker)
-        elif target:
-            attacker = board.piece_at(move.from_square)
-            victim_value = PIECE_VALUES[target.piece_type]
-            attacker_value = PIECE_VALUES[attacker.piece_type] if attacker else 1  # Assume attacker is pawn if absent
-            score += 1000 * victim_value - attacker_value
-
-        # Castling has moderate priority
+            # Promotion is typically game-changing, deserves highest priority
+            # Could be refined to value Queen promotions higher than underpromotions
+            score += PROMOTION_BONUS
+            
+            # Optional refinement: bonus for promoting to Queen specifically
+            # if move.promotion == chess.QUEEN:
+            #     score += 1000
+        
+        # ---------------------------------------------------------------------
+        # PRIORITY 2: CAPTURES (MVV-LVA)
+        # ---------------------------------------------------------------------
+        # Most Valuable Victim - Least Valuable Attacker heuristic
+        # Prefer capturing expensive pieces with cheap pieces
+        elif target_piece:
+            # Get the attacking piece
+            attacker_piece = board.piece_at(move.from_square)
+            
+            # Calculate victim value (piece being captured)
+            victim_value = PIECE_VALUES.get(target_piece.piece_type, 0)
+            
+            # Calculate attacker value (piece doing the capturing)
+            # Fallback to 1 (pawn value) if attacker somehow not found
+            attacker_value = PIECE_VALUES.get(attacker_piece.piece_type, 1) if attacker_piece else 1
+            
+            # MVV-LVA formula: High victim value, low attacker value = good capture
+            # Examples:
+            #   - Pawn (1) takes Queen (9): 1000*9 - 1 = 8999
+            #   - Queen (9) takes Pawn (1): 1000*1 - 9 = 991
+            # This ensures Pawn×Queen is examined before Queen×Pawn
+            score += CAPTURE_BASE_SCORE * victim_value - attacker_value
+        
+        # ---------------------------------------------------------------------
+        # PRIORITY 3: CASTLING
+        # ---------------------------------------------------------------------
+        # Castling is strategically important (king safety + rook activation)
         elif board.is_castling(move):
-            score += 500
-
-        # Center control moves (optional: prioritize moves to central squares)
-        elif move.to_square in [chess.D4, chess.D5, chess.E4, chess.E5]:
-            score += 100  # Slightly prioritize controlling the center
-
+            score += CASTLING_BONUS
+        
+        # ---------------------------------------------------------------------
+        # PRIORITY 4: CENTER CONTROL
+        # ---------------------------------------------------------------------
+        # Moves to central squares are generally good strategically
+        # Controlling the center provides tactical flexibility
+        elif move.to_square in CENTER_SQUARES:
+            score += CENTER_CONTROL_BONUS
+        
+        # All other quiet moves receive score of 0 (examined last)
+        
+        # Store the score-move pair
         move_scores.append((score, move))
-
-    # Sort moves by their scores in descending order
+    
+    # =============================================================================
+    # SORT AND RETURN
+    # =============================================================================
+    
+    # Sort in descending order by score (highest priority moves first)
+    # key=lambda x: x[0] means sort by the first element (score) of each tuple
     move_scores.sort(reverse=True, key=lambda x: x[0])
-    return [m for _, m in move_scores]
-
+    
+    # Extract just the moves (discard scores) and return
+    return [move for score, move in move_scores]
 if __name__ == "__main__":
     tests = {
     # --- Opening Positions ---
