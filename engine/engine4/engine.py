@@ -110,7 +110,7 @@ class Engine:
             self.tt[key] = (value, depth, flag)
 
 
-    def minimax(self, board: 'chess.Board', depth: int, is_maximizing: bool, alpha: float = float('-inf'), beta: float = float('inf')) -> float:
+    def minimax(self, board: 'chess.Board', depth: int, is_maximizing: bool, alpha: float = float('-inf'), beta: float = float('inf'),depth_count=1) -> float:
         """
         Minimax algorithm with alpha-beta pruning for chess position evaluation.
         
@@ -196,13 +196,10 @@ class Engine:
 
             for move in moves:
                 board.push(move)
-                if board.is_check() and depth<8:
-                    eval_score = self.minimax(board, depth+1, False, alpha, beta)
-                    
-                elif board.is_capture(move) and depth<8:
-                    eval_score = self.minimax(board, depth, False, alpha, beta)
+                if board.is_check() and depth_count<6:
+                    eval_score = self.minimax(board, depth, False, alpha, beta,depth_count+1)
                 else:
-                    eval_score = self.minimax(board, depth-1, False, alpha, beta)
+                    eval_score = self.minimax(board, depth-1, False, alpha, beta,depth_count+1)
                 board.pop()
 
                 if eval_score > max_eval:
@@ -235,12 +232,10 @@ class Engine:
 
             for move in moves:
                 board.push(move)
-                if board.is_check() and depth<8:
-                    eval_score = self.minimax(board, depth + 1, True, alpha, beta)
-                elif board.is_capture(move) and depth<8:
-                    eval_score = self.minimax(board, depth , True, alpha, beta)
+                if board.is_check() and depth_count<6:
+                    eval_score = self.minimax(board, depth + 1, True, alpha, beta,depth_count+1)
                 else:
-                    eval_score = self.minimax(board, depth - 1, True, alpha, beta)
+                    eval_score = self.minimax(board, depth - 1, True, alpha, beta,depth_count+1)
                 board.pop()
 
                 if eval_score < min_eval:
