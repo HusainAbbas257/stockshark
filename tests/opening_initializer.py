@@ -4,8 +4,8 @@ import json
 
 STOCKFISH_PATH = r"C:\Users\dell\Desktop\stockshark\tests\stockfish\stockfish-windows-x86-64.exe"
 OUTPUT_JSON = "data/opening.json"
-PLY_DEPTH = 8  # number of half-moves (plies)
-TOP_N_MOVES = 2  # keep only top N moves per position for performance
+PLY_DEPTH = 5  # number of half-moves (plies)
+TOP_N_MOVES = 5 # keep only top N moves per position for performance
 
 def generate_opening_book(board, depth, engine, book):
     if depth == 0 or board.is_game_over():

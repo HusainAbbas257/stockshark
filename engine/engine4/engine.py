@@ -2,6 +2,9 @@ import chess
 from evaluation import evaluate as evaluate_board
 from evaluation import ordered_moves
 import random
+import json
+
+opening_file_path=r'C:\Users\dell\Desktop\stockshark\data\opening.json'
 
 # Zobrist Table (Global)
 ZOBRIST_PIECES = {}
@@ -13,6 +16,11 @@ class Engine:
     def __init__(self):
         self.tt={}
         self.init_zobrist()
+        try:
+            with open(opening_file_path, "r") as f:
+                self.opening = json.load(f)
+        except FileNotFoundError:
+            self.opening = {}
     def init_zobrist(self):
         global ZOBRIST_PIECES, ZOBRIST_CASTLING, ZOBRIST_ENPASSANT, ZOBRIST_SIDE
 
@@ -283,6 +291,14 @@ class Engine:
             - The root node always uses full alpha-beta window (-inf, +inf)
         """
         
+        fen = board.fen()
+        moves_list = self.opening.get(fen)
+
+        if moves_list is not None:
+            uci = random.choice(moves_list)   # pick random from list
+            move = chess.Move.from_uci(uci)  # convert to move object
+            return (move, 0)
+
         # =============================================================================
         # DETERMINE PERSPECTIVE - Which player is making the move
         # =============================================================================
@@ -565,7 +581,7 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    e.self_play(5, 50)
+    e.self_play(3, 50)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
     # e.compare(depth1=3,depth2=3,max_moves=25)
