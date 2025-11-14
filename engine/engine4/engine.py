@@ -1,9 +1,107 @@
 import chess
 from evaluation import evaluate as evaluate_board
 from evaluation import ordered_moves
+import random
 
+# Zobrist Table (Global)
+ZOBRIST_PIECES = {}
+ZOBRIST_CASTLING = {}
+ZOBRIST_ENPASSANT = {}
+ZOBRIST_SIDE = random.getrandbits(64)
 
 class Engine:
+    def __init__(self):
+        self.tt={}
+        self.init_zobrist()
+    def init_zobrist(self):
+        global ZOBRIST_PIECES, ZOBRIST_CASTLING, ZOBRIST_ENPASSANT, ZOBRIST_SIDE
+
+        random.seed(1337)
+
+        ZOBRIST_PIECES = {}
+        ZOBRIST_CASTLING = {}
+        ZOBRIST_ENPASSANT = {}
+        ZOBRIST_SIDE = random.getrandbits(64)
+
+        for piece_type in range(1, 7):
+            for color in [chess.WHITE, chess.BLACK]:
+                for square in range(64):
+                    ZOBRIST_PIECES[(piece_type, color, square)] = random.getrandbits(64)
+
+        for right in ["K", "Q", "k", "q"]:
+            ZOBRIST_CASTLING[right] = random.getrandbits(64)
+
+        for file in range(8):
+            ZOBRIST_ENPASSANT[file] = random.getrandbits(64)
+
+
+    def compute_hash(self, board):
+        h = 0
+
+        for square in range(64):
+            piece = board.piece_at(square)
+            if piece:
+                h ^= ZOBRIST_PIECES[(piece.piece_type, piece.color, square)]
+
+        if board.turn == chess.BLACK:
+            h ^= ZOBRIST_SIDE
+
+        if board.has_kingside_castling_rights(chess.WHITE):
+            h ^= ZOBRIST_CASTLING["K"]
+        if board.has_queenside_castling_rights(chess.WHITE):
+            h ^= ZOBRIST_CASTLING["Q"]
+        if board.has_kingside_castling_rights(chess.BLACK):
+            h ^= ZOBRIST_CASTLING["k"]
+        if board.has_queenside_castling_rights(chess.BLACK):
+            h ^= ZOBRIST_CASTLING["q"]
+
+        # EP only if capture possible
+        ep = board.ep_square
+        if ep:
+            file = chess.square_file(ep)
+            if board.turn == chess.WHITE:
+                if board.piece_at(ep - 9) or board.piece_at(ep - 7):
+                    h ^= ZOBRIST_ENPASSANT[file]
+            else:
+                if board.piece_at(ep + 9) or board.piece_at(ep + 7):
+                    h ^= ZOBRIST_ENPASSANT[file]
+
+        return h
+
+    # --- Transposition table helpers ---#
+    def tt_lookup(self, key: int, depth: int, alpha: float, beta: float):
+        """
+        Return a usable value from TT or None.
+        Entry format: (value, stored_depth, flag)
+        Flags: "EXACT", "LOWERBOUND", "UPPERBOUND"
+        """
+        entry = self.tt.get(key)
+        if entry is None:
+            return None
+
+        value, stored_depth, flag = entry
+        # only use if stored depth >= required depth
+        if stored_depth < depth:
+            return None
+
+        if flag == "EXACT":
+            return value
+        if flag == "LOWERBOUND" and value >= beta:
+            return value
+        if flag == "UPPERBOUND" and value <= alpha:
+            return value
+
+        return None
+
+    def tt_store(self, key: int, depth: int, value: float, flag: str):
+        """
+        Store into TT. Overwrite only if new depth >= stored depth (simple policy).
+        """
+        entry = self.tt.get(key)
+        if entry is None or depth >= entry[1]:
+            self.tt[key] = (value, depth, flag)
+
+
     def minimax(self, board: 'chess.Board', depth: int, is_maximizing: bool, alpha: float = float('-inf'), beta: float = float('inf')) -> float:
         """
         Minimax algorithm with alpha-beta pruning for chess position evaluation.
@@ -41,8 +139,7 @@ class Engine:
                 return float('inf') - depth  # Winning score (prefer faster wins)
         
         # Draw scenarios - always return neutral evaluation
-        if (board.is_stalemate() or 
-            board.is_fivefold_repetition() or 
+        if (board.is_fivefold_repetition() or #stalemates will be counted afterwards for better performance
             board.is_insufficient_material() or 
             board.is_repetition()):
             return 0.0
@@ -56,6 +153,20 @@ class Engine:
         if depth == 0:
             return evaluate_board(board)
         
+        
+        
+        
+        # ==================================================================
+        # TRANSPOSITION TABLE: checking for already scanned transposition
+        # ==================================================================
+        key = self.compute_hash(board)
+        tt_val = self.tt_lookup(key, depth, alpha, beta)
+        if tt_val is not None:
+            return tt_val
+
+        
+        
+        
         # =============================================================================
         # MOVE GENERATION - Order moves for better pruning
         # =============================================================================
@@ -64,64 +175,73 @@ class Engine:
         # Better move ordering = more alpha-beta cutoffs = faster search
         moves = ordered_moves(board)
         
+        # if there is no legal move then its a draw buddy:
+        if not moves:
+            return 0.0
+        
         # =============================================================================
         # MAXIMIZING PLAYER - White's turn (or whoever is maximizing)
         # =============================================================================
-        
         if is_maximizing:
-            max_eval = float('-inf')  # Start with worst possible score
-            
+            alpha_orig = alpha
+            max_eval = float('-inf')
+
             for move in moves:
-                # Make move
                 board.push(move)
-                
-                # Recursively evaluate from opponent's perspective (minimizing)
-                # Key fix: pass 'not is_maximizing' to alternate perspectives
-                eval_score = self.minimax(board, depth - 1, not is_maximizing, alpha, beta)
-                
-                # Undo move
+                eval_score = self.minimax(board, depth - 1, False, alpha, beta)
                 board.pop()
-                
-                # Update best score found
-                max_eval = max(max_eval, eval_score)
-                
-                # Update alpha (best score maximizer can guarantee so far)
-                alpha = max(alpha, eval_score)
-                
-                # Alpha-beta pruning: if alpha >= beta, minimizer won't allow this path
-                if beta <= alpha:
-                    break  # Beta cutoff - remaining moves can't be better
-            
+
+                if eval_score > max_eval:
+                    max_eval = eval_score
+                if eval_score > alpha:
+                    alpha = eval_score
+
+                if alpha >= beta:
+                    # fail-high: true value >= beta -> LOWERBOUND
+                    self.tt_store(key, depth, alpha, "LOWERBOUND")
+                    return alpha
+
+            # no cutoff: set flag based on original window
+            if max_eval <= alpha_orig:
+                flag = "UPPERBOUND"
+            elif max_eval >= beta:
+                flag = "LOWERBOUND"
+            else:
+                flag = "EXACT"
+
+            self.tt_store(key, depth, max_eval, flag)
             return max_eval
-        
         # =============================================================================
-        # MINIMIZING PLAYER - Black's turn (or whoever is minimizing)
+        # MINIMIZING PLAYER - White's turn (or whoever is maximizing)
         # =============================================================================
-        
         else:
-            min_eval = float('inf')  # Start with worst possible score for minimizer
-            
+            beta_orig = beta
+            alpha_orig = alpha
+            min_eval = float('inf')
+
             for move in moves:
-                # Make move
                 board.push(move)
-                
-                # Recursively evaluate from opponent's perspective (maximizing)
-                # Key fix: pass 'not is_maximizing' to alternate perspectives
-                eval_score = self.minimax(board, depth - 1, not is_maximizing, alpha, beta)
-                
-                # Undo move
+                eval_score = self.minimax(board, depth - 1, True, alpha, beta)
                 board.pop()
-                
-                # Update best score found
-                min_eval = min(min_eval, eval_score)
-                
-                # Update beta (best score minimizer can guarantee so far)
-                beta = min(beta, eval_score)
-                
-                # Alpha-beta pruning: if beta <= alpha, maximizer won't allow this path
+
+                if eval_score < min_eval:
+                    min_eval = eval_score
+                if eval_score < beta:
+                    beta = eval_score
+
                 if beta <= alpha:
-                    break  # Alpha cutoff - remaining moves can't be better
-            
+                    # fail-low: true value <= alpha -> UPPERBOUND
+                    self.tt_store(key, depth, beta, "UPPERBOUND")
+                    return beta
+
+            if min_eval >= beta_orig:
+                flag = "LOWERBOUND"
+            elif min_eval <= alpha_orig:
+                flag = "UPPERBOUND"
+            else:
+                flag = "EXACT"
+
+            self.tt_store(key, depth, min_eval, flag)
             return min_eval
     def best_move(self, board: 'chess.Board', depth: int) -> tuple:
         """
@@ -437,8 +557,36 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    e.self_play(4, 50)
-    # b=chess.Board('7Q/6B1/8/3N4/1p6/kP6/2K5/8 w - - 6 7')
-    # print(e.best_move(b,5))
+    # e.self_play(5, 50)
+    b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
+    print(e.best_move(b,5))
     # e.compare(depth1=3,depth2=3,max_moves=25)
-    # e.play_against_human(chess.WHITE,4)
+    # e.play_against_human(chess.WHITE,5)
+    
+    '''legendry game against @chess.com zamanatop:
+    [Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Link "https://www.chess.com/classroom/smoggy-classic-turret"]
+
+1. e4 d6 
+2. Nf3 Nf6 
+3. Nc3 g6 
+4. d4 Bg7 
+5. Bg5 O-O 
+6. e5 Nh5 
+7. h3 Be6 
+8. g4 dxe5 
+9. gxh5 exd4 
+10. Ne4 Qd5 
+11. Bxe7 Re8 
+12. Nfg5 Rxe7 
+13.Nxe6 Qxe4+ 
+
+zamanatop resigns realising he is losing.
+And so stockshark defeeated its first human opponent on 14/11/2025
+    '''
