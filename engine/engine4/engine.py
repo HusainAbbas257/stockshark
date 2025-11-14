@@ -390,6 +390,8 @@ class Engine:
         
         return best_move_found, best_evaluation
 
+
+
     def self_play(self, depth: int = 3, max_moves: int = 150):
         print("\n" + "="*50)
         print("       SELF-PLAY GAME STARTING")
@@ -409,16 +411,16 @@ class Engine:
             print(f"{'__'*25}")
 
             best_move_found, evaluation = self.best_move(board, depth)
+
             if best_move_found is None:
-                print("ERROR: No legal move found (unexpected)")
-                print(f"Position: {board.fen()}")
+                print("ERROR: No legal move found")
                 break
 
             eval_display = f"{evaluation:+.1f}" if abs(evaluation) < 1000 else \
                         ("+inf" if evaluation > 0 else "-inf")
+
             print(f"Move: {best_move_found.uci():6s} \t Eval: {eval_display:>6s}")
 
-            # push move to update the board
             board.push(best_move_found)
             move_history.append(best_move_found.uci())
             move_number += 1
@@ -428,31 +430,37 @@ class Engine:
         print("Moves Played:", len(move_history))
         print("Move List:", move_history)
 
+
     def play_against_human(self, color=chess.WHITE, depth=3):
         print("\n=== HUMAN VS AI ===\n")
         board = chess.Board()
-        print(board)
 
         while not board.is_game_over():
-            if board.turn == color:
-                print("AI thinking...")
-                move,_ = self.best_move(board, depth)
-                print(f"AI plays: {move}")
-                if move!=None:
-                    board.push(move)
-            else:
-                print("Your turn!")
-                user_move = input("Enter move (e.g. e2e4): ")
-                try:
-                    board.push_uci(user_move)
-                except:
-                    print("Invalid move, try again.")
-                    continue
             print(board)
 
-        print("\n=== GAME OVER ===")
+            # Human move
+            if board.turn == color:
+                while True:
+                    user_move = input("Your move (UCI): ").strip()
+                    try:
+                        move = chess.Move.from_uci(user_move)
+                        if move in board.legal_moves:
+                            board.push(move)
+                            break
+                        else:
+                            print("Illegal move.")
+                    except:
+                        print("Invalid format.")
+            else:
+                ai_move, eval_ = self.best_move(board, depth)
+                print(f"AI plays: {ai_move.uci()}  Eval: {eval_}")
+                board.push(ai_move)
+
+        print("\nGame Over!")
         print("Result:", board.result())
-        print()
+        print("Final position:")
+        print(board)
+
     def compare(self, depth1: int = 3, depth2: int = 3, max_moves: int = 150) -> dict:
         """
         Play engine against itself with different depths for White and Black.
@@ -557,9 +565,9 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    # e.self_play(5, 50)
-    b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
-    print(e.best_move(b,5))
+    e.self_play(5, 50)
+    # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
+    # print(e.best_move(b,5))
     # e.compare(depth1=3,depth2=3,max_moves=25)
     # e.play_against_human(chess.WHITE,5)
     

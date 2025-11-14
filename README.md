@@ -4,7 +4,7 @@ A step-by-step **educational chess engine project** written in Python. Inspired 
 ---
 
 ## 🚀 Project Goal
-Stockshark's mission is simple: **learn chess engine development by actually building one**, and at the end defeat atleast myself.
+Stockshark's mission is simple: **learn chess engine development by actually building one**, and at the end defeat atleast myself (it already defeated me now i want to make it as strong as i can).
 
 ---
 
@@ -21,9 +21,9 @@ Stockshark's mission is simple: **learn chess engine development by actually bui
 - ✅ Interactive play
 - ✅ Move Ordering
 - ✅ Opening book
+- ✅Transposition Table
 - 🔲 UCI support
 - 🔲 Time management
-- 🔲 Transposition Table
 - 🔲 Quiescence Search
 
 ---
@@ -50,7 +50,7 @@ stockshark/
 - [x] Add move ordering  
 - [x] Add iterative deepening  
 - [x] Add opening book  
-- [ ] Add transposition table (Zobrist hashing)  
+- [x] Add transposition table (Zobrist hashing)  
 - [ ] Add quiescence search  
 - [ ] Add null-move pruning  
 - [ ] Add late move reductions (LMR)  
