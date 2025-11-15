@@ -256,9 +256,28 @@ class Engine:
             alpha_orig = alpha
             max_eval = float('-inf')
 
-            for move in moves:
+            for idx, move in enumerate(moves):
+
                 board.push(move)
-                eval_score = self.minimax(board, depth-1, False, alpha, beta)
+
+                # --- LMR CONDITIONS ---
+                if (
+                    depth >= 3
+                    and idx >= 3                 # late moves
+                    and not board.is_capture(move)
+                    and not board.gives_check(move)
+                ):
+                    # reduced search
+                    eval_score = -self.minimax(board, depth-2, False, -beta, -alpha)
+
+                    # if it unexpectedly looks good, re-search at full depth
+                    if eval_score > alpha:
+                        eval_score = -self.minimax(board, depth-1, False, -beta, -alpha)
+
+                else:
+                    # normal search
+                    eval_score = -self.minimax(board, depth-1, False, -beta, -alpha)
+
                 board.pop()
 
 
@@ -300,10 +319,28 @@ class Engine:
             alpha_orig = alpha
             min_eval = float('inf')
 
-            for move in moves:
+            for idx, move in enumerate(moves):
+
                 board.push(move)
-                eval_score = self.minimax(board, depth - 1, True, alpha, beta,depth_count+1)
+
+                # --- LMR CONDITIONS ---
+                if (
+                    depth >= 3
+                    and idx >= 3
+                    and not board.is_capture(move)
+                    and not board.gives_check(move)
+                ):
+                    eval_score = -self.minimax(board, depth-2, True, -beta, -alpha)
+
+                    # re-search condition reversed for minimizing side
+                    if eval_score < beta:
+                        eval_score = -self.minimax(board, depth-1, True, -beta, -alpha)
+                else:
+                    eval_score = -self.minimax(board, depth-1, True, -beta, -alpha)
+
+
                 board.pop()
+
 
                 if eval_score < min_eval:
                     min_eval = eval_score
@@ -311,13 +348,18 @@ class Engine:
                     beta = eval_score
 
                 if beta <= alpha:
-                    # store killer move for minimizing player too
+                    # history update
+                    self.history[move.from_square][move.to_square] += depth_count * depth_count
+
+                    # killer moves
                     if depth not in self.killer_moves:
                         self.killer_moves[depth] = []
 
+                    # store killer move for minimizing player too
                     if move not in self.killer_moves[depth]:
                         self.killer_moves[depth].insert(0, move)
                         self.killer_moves[depth] = self.killer_moves[depth][:2]
+
 
                     self.tt_store(key, depth, beta, "UPPERBOUND")
                     return beta
@@ -662,7 +704,7 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    e.self_play(4, 50)
+    e.self_play(3, 50)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
     # e.compare(depth1=3,depth2=3,max_moves=25)
