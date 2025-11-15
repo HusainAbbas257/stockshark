@@ -177,137 +177,72 @@ def evaluate(board: 'chess.Board') -> float:
     )
     
     return total_evaluation
-def ordered_moves(board: 'chess.Board') -> list:
-    """
-    Orders legal moves using heuristic scoring to optimize alpha-beta pruning.
-    
-    Move ordering is critical for search efficiency. By examining likely-good moves first
-    (captures, promotions, checks), alpha-beta pruning can eliminate more branches earlier,
-    significantly reducing the search tree size. Good move ordering can improve search
-    speed by 3-10x in typical positions.
-    
-    Ordering strategy (highest to lowest priority):
-        1. Promotions (especially to Queen) - typically game-changing
-        2. Captures using MVV-LVA (Most Valuable Victim - Least Valuable Attacker)
-           - Prefer capturing high-value pieces with low-value pieces
-           - Example: Pawn takes Queen (score ~9000) > Queen takes Pawn (score ~900)
-        3. Castling moves - important strategic moves
-        4. Center control - moves to central squares (e4, e5, d4, d5)
-        5. Other quiet moves - remaining non-tactical moves
-    
-    Args:
-        board: Current chess board state containing legal moves to order
-    
-    Returns:
-        list[chess.Move]: Legal moves sorted by heuristic score (best first)
-    
-    Time Complexity: O(n log n) where n is the number of legal moves
-    Space Complexity: O(n) for storing move-score pairs
-    """
-    
-    # =============================================================================
-    # PIECE VALUE CONSTANTS - Standard relative piece values in pawns
-    # =============================================================================
-    
-    PIECE_VALUES = {
-        chess.PAWN: 1,      # Base unit of material
-        chess.KNIGHT: 3,    # Minor piece
-        chess.BISHOP: 3,    # Minor piece (slightly better than knight in open positions)
-        chess.ROOK: 5,      # Major piece
-        chess.QUEEN: 9,     # Most powerful piece
-        chess.KING: 0       # King has no exchange value (cannot be captured)
-    }
-    
-    # =============================================================================
-    # HEURISTIC SCORE RANGES - Priority ordering for different move types
-    # =============================================================================
-    
-    PROMOTION_BONUS = 10_000      # Promotions almost always critical
-    CAPTURE_BASE_SCORE = 1_000    # Base score for captures (scaled by MVV-LVA)
-    CASTLING_BONUS = 500          # Castling is strategically important
-    CENTER_CONTROL_BONUS = 100    # Slight bonus for central presence
-    
-    # Center squares (the four most important central squares)
-    CENTER_SQUARES = {chess.D4, chess.D5, chess.E4, chess.E5}
-    
-    # =============================================================================
-    # MOVE SCORING LOOP
-    # =============================================================================
-    
-    move_scores = []  # List of (score, move) tuples
-    
-    for move in board.legal_moves:
-        score = 0  # Initialize score for this move
-        
-        # Get the piece at the destination square (None if empty)
-        target_piece = board.piece_at(move.to_square)
-        
-        # ---------------------------------------------------------------------
-        # PRIORITY 1: PROMOTIONS
-        # ---------------------------------------------------------------------
-        # Pawn reaching the back rank and promoting (usually to Queen)
-        if move.promotion:
-            # Promotion is typically game-changing, deserves highest priority
-            # Could be refined to value Queen promotions higher than underpromotions
-            score += PROMOTION_BONUS
-            
-            # Optional refinement: bonus for promoting to Queen specifically
-            # if move.promotion == chess.QUEEN:
-            #     score += 1000
-        
-        # ---------------------------------------------------------------------
-        # PRIORITY 2: CAPTURES (MVV-LVA)
-        # ---------------------------------------------------------------------
-        # Most Valuable Victim - Least Valuable Attacker heuristic
-        # Prefer capturing expensive pieces with cheap pieces
-        elif target_piece:
-            # Get the attacking piece
-            attacker_piece = board.piece_at(move.from_square)
-            
-            # Calculate victim value (piece being captured)
-            victim_value = PIECE_VALUES.get(target_piece.piece_type, 0)
-            
-            # Calculate attacker value (piece doing the capturing)
-            # Fallback to 1 (pawn value) if attacker somehow not found
-            attacker_value = PIECE_VALUES.get(attacker_piece.piece_type, 1) if attacker_piece else 1
-            
-            # MVV-LVA formula: High victim value, low attacker value = good capture
-            # Examples:
-            #   - Pawn (1) takes Queen (9): 1000*9 - 1 = 8999
-            #   - Queen (9) takes Pawn (1): 1000*1 - 9 = 991
-            # This ensures Pawn×Queen is examined before Queen×Pawn
-            score += CAPTURE_BASE_SCORE * victim_value - attacker_value
-        
-        # ---------------------------------------------------------------------
-        # PRIORITY 3: CASTLING
-        # ---------------------------------------------------------------------
-        # Castling is strategically important (king safety + rook activation)
-        elif board.is_castling(move):
-            score += CASTLING_BONUS
-        
-        # ---------------------------------------------------------------------
-        # PRIORITY 4: CENTER CONTROL
-        # ---------------------------------------------------------------------
-        # Moves to central squares are generally good strategically
-        # Controlling the center provides tactical flexibility
-        elif move.to_square in CENTER_SQUARES:
-            score += CENTER_CONTROL_BONUS
-        
-        # All other quiet moves receive score of 0 (examined last)
-        
-        # Store the score-move pair
-        move_scores.append((score, move))
-    
-    # =============================================================================
-    # SORT AND RETURN
-    # =============================================================================
-    
-    # Sort in descending order by score (highest priority moves first)
-    # key=lambda x: x[0] means sort by the first element (score) of each tuple
-    move_scores.sort(reverse=True, key=lambda x: x[0])
-    
-    # Extract just the moves (discard scores) and return
-    return [move for score, move in move_scores]
+def ordered_moves(board: 'chess.Board', killer_moves={}, depth=0) -> list:
+        """
+        Orders legal moves using heuristic scoring to optimize alpha-beta pruning.
+        Includes killer move heuristic.
+        """
+
+
+        # scoring constants
+        PROMOTION_BONUS = 10_000
+        KILLER_BONUS     = 9_000      # below promotion, above captures
+        CAPTURE_BASE     = 1_000
+        CASTLING_BONUS   = 500
+        CENTER_BONUS     = 100
+
+        CENTER_SQUARES = {chess.D4, chess.D5, chess.E4, chess.E5}
+
+        move_scores = []
+
+        # retrieve killer moves for this depth
+        killers = killer_moves.get(depth, [])
+
+        for move in board.legal_moves:
+            score = 0
+            target_piece = board.piece_at(move.to_square)
+
+            # -----------------------------------------------------------
+            # PRIORITY 0 — KILLER MOVES (quiet only)
+            # -----------------------------------------------------------
+            if move in killers:
+                # only quiet moves should get killer bonus
+                if not target_piece and not move.promotion and not board.is_castling(move):
+                    score += KILLER_BONUS
+
+            # -----------------------------------------------------------
+            # PRIORITY 1 — PROMOTIONS
+            # -----------------------------------------------------------
+            if move.promotion:
+                score += PROMOTION_BONUS
+
+            # -----------------------------------------------------------
+            # PRIORITY 2 — CAPTURES (MVV-LVA)
+            # -----------------------------------------------------------
+            elif target_piece:
+                attacker_piece = board.piece_at(move.from_square)
+                victim = PIECE_VALUES.get(target_piece.piece_type, 0)
+                attacker = PIECE_VALUES.get(attacker_piece.piece_type, 1) if attacker_piece else 1
+                score += CAPTURE_BASE * victim - attacker
+
+            # -----------------------------------------------------------
+            # PRIORITY 3 — CASTLING
+            # -----------------------------------------------------------
+            elif board.is_castling(move):
+                score += CASTLING_BONUS
+
+            # -----------------------------------------------------------
+            # PRIORITY 4 — CENTER CONTROL
+            # -----------------------------------------------------------
+            elif move.to_square in CENTER_SQUARES:
+                score += CENTER_BONUS
+
+            move_scores.append((score, move))
+
+        # sort best first
+        move_scores.sort(reverse=True, key=lambda x: x[0])
+        return [m for s, m in move_scores]
+
 if __name__ == "__main__":
     tests = {
     # --- Opening Positions ---

@@ -3,6 +3,7 @@ from evaluation import evaluate as evaluate_board
 from evaluation import ordered_moves
 import random
 import json
+from collections import defaultdict
 
 opening_file_path=r'C:\Users\dell\Desktop\stockshark\data\opening.json'
 
@@ -16,6 +17,7 @@ class Engine:
     def __init__(self):
         self.tt={}
         self.init_zobrist()
+        self.killer_moves = defaultdict(lambda: [None, None])  # two killers per depth
         try:
             with open(opening_file_path, "r") as f:
                 self.opening = json.load(f)
@@ -239,7 +241,7 @@ class Engine:
         
         # Get moves sorted by heuristic priority (captures, checks, etc. first)
         # Better move ordering = more alpha-beta cutoffs = faster search
-        moves = ordered_moves(board)
+        moves = ordered_moves(board,self.killer_moves,depth)
         
         # if there is no legal move then its a draw buddy:
         if not moves:
@@ -264,7 +266,15 @@ class Engine:
                     alpha = eval_score
 
                 if alpha >= beta:
-                    # fail-high: true value >= beta -> LOWERBOUND
+                    # storing iller moves
+                    if depth not in self.killer_moves:
+                        self.killer_moves[depth] = []
+
+                    if move not in self.killer_moves[depth]:
+                        self.killer_moves[depth].insert(0, move)
+                        # limit to 2
+                        self.killer_moves[depth] = self.killer_moves[depth][:2]
+
                     self.tt_store(key, depth, alpha, "LOWERBOUND")
                     return alpha
 
@@ -297,9 +307,17 @@ class Engine:
                     beta = eval_score
 
                 if beta <= alpha:
-                    # fail-low: true value <= alpha -> UPPERBOUND
+                    # store killer move for minimizing player too
+                    if depth not in self.killer_moves:
+                        self.killer_moves[depth] = []
+
+                    if move not in self.killer_moves[depth]:
+                        self.killer_moves[depth].insert(0, move)
+                        self.killer_moves[depth] = self.killer_moves[depth][:2]
+
                     self.tt_store(key, depth, beta, "UPPERBOUND")
                     return beta
+
 
             if min_eval >= beta_orig:
                 flag = "LOWERBOUND"
@@ -640,7 +658,7 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    e.self_play(3, 50)
+    e.self_play(4, 50)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
     # e.compare(depth1=3,depth2=3,max_moves=25)
