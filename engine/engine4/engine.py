@@ -18,6 +18,8 @@ class Engine:
         self.tt={}
         self.init_zobrist()
         self.killer_moves = defaultdict(lambda: [None, None])  # two killers per depth
+        self.history = [[0]*64 for _ in range(64)]
+
         try:
             with open(opening_file_path, "r") as f:
                 self.opening = json.load(f)
@@ -241,7 +243,7 @@ class Engine:
         
         # Get moves sorted by heuristic priority (captures, checks, etc. first)
         # Better move ordering = more alpha-beta cutoffs = faster search
-        moves = ordered_moves(board,self.killer_moves,depth)
+        moves = ordered_moves(board,self.killer_moves,depth,self.history)
         
         # if there is no legal move then its a draw buddy:
         if not moves:
@@ -266,7 +268,9 @@ class Engine:
                     alpha = eval_score
 
                 if alpha >= beta:
-                    # storing iller moves
+                    # storing this move as agood move:
+                    self.history[move.from_square][move.to_square] += depth_count * depth_count
+                    # storing killer moves
                     if depth not in self.killer_moves:
                         self.killer_moves[depth] = []
 

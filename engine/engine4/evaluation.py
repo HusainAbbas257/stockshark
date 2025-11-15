@@ -177,7 +177,8 @@ def evaluate(board: 'chess.Board') -> float:
     )
     
     return total_evaluation
-def ordered_moves(board: 'chess.Board', killer_moves={}, depth=0) -> list:
+def ordered_moves(board: 'chess.Board', killer_moves={}, depth=0,history = [[0]*64 for _ in range(64)]
+) -> list:
         """
         Orders legal moves using heuristic scoring to optimize alpha-beta pruning.
         Includes killer move heuristic.
@@ -237,6 +238,13 @@ def ordered_moves(board: 'chess.Board', killer_moves={}, depth=0) -> list:
             elif move.to_square in CENTER_SQUARES:
                 score += CENTER_BONUS
 
+            
+            # ========================================================
+            # Priority 5 - other moves will use history heurestic
+            # ========================================================
+            else:
+                score+=history[move.from_square][move.to_square]
+            
             move_scores.append((score, move))
 
         # sort best first
