@@ -4,8 +4,10 @@ from evaluation import ordered_moves
 import random
 import json
 from collections import defaultdict
+import os
 
-opening_file_path=r'C:\Users\dell\Desktop\stockshark\data\opening.json'
+# FIXED: Use relative path instead of hardcoded absolute path
+opening_file_path = os.path.join(os.path.dirname(__file__), 'data', 'opening.json')
 
 # Zobrist Table (Global)
 ZOBRIST_PIECES = {}
@@ -17,7 +19,8 @@ class Engine:
     def __init__(self):
         self.tt={}
         self.init_zobrist()
-        self.killer_moves = defaultdict(lambda: [None, None])  # two killers per depth
+        self.killer_moves = defaultdict(list)
+
         self.history = [[0]*64 for _ in range(64)]
 
         try:
@@ -25,6 +28,7 @@ class Engine:
                 self.opening = json.load(f)
         except FileNotFoundError:
             self.opening = {}
+            
     def init_zobrist(self):
         global ZOBRIST_PIECES, ZOBRIST_CASTLING, ZOBRIST_ENPASSANT, ZOBRIST_SIDE
 
@@ -113,16 +117,6 @@ class Engine:
         if entry is None or depth >= entry[1]:
             self.tt[key] = (value, depth, flag)
 
-    def is_calm(self, board):
-        if board.is_check():
-            return False
-
-        for move in board.legal_moves:
-            if board.is_capture(move):
-                return False
-
-        return True
-
     def is_good_capture(self, board, move):
         piece_from = board.piece_at(move.from_square)
         piece_to = board.piece_at(move.to_square)
@@ -133,14 +127,21 @@ class Engine:
         # Only search captures where you take equal or higher value
         return piece_to.piece_type >= piece_from.piece_type
 
-
-
     def quiescence(self, board, alpha, beta, depth=0, max_q=4):
-            # stop if too deep
+        # stop if too deep
         if depth >= max_q:
-            return evaluate_board(board)
+            eval_result = evaluate_board(board)
+            # ADDED: Sanity check for evaluation function returning infinity
+            if abs(eval_result) > 90000:
+                # If eval returns near-infinity, it's likely wrong - use 0 instead
+                return 0.0
+            return eval_result
 
         stand_pat = evaluate_board(board)
+        
+        # ADDED: Sanity check - evaluation should never be infinity in non-terminal positions
+        if abs(stand_pat) > 90000:
+            stand_pat = 0.0
 
         # Beta-cutoff (fail hard)
         if stand_pat >= beta:
@@ -160,6 +161,7 @@ class Engine:
                 continue
 
             board.push(move)
+            # Negamax negation - simpler and standard for quiescence
             score = -self.quiescence(board, -beta, -alpha, depth + 1, max_q)
             board.pop()
 
@@ -169,8 +171,7 @@ class Engine:
                 alpha = score
 
         return alpha
-
-
+        
     def minimax(self, board: 'chess.Board', depth: int, is_maximizing: bool, alpha: float = float('-inf'), beta: float = float('inf'),depth_count=1) -> float:
         """
         Minimax algorithm with alpha-beta pruning for chess position evaluation.
@@ -200,15 +201,17 @@ class Engine:
         # Checkmate: Game over, return depth-adjusted score
         # - Faster checkmates are valued higher (for winning) or lower (for losing)
         # - Adding depth for loser, subtracting for winner ensures proper ordering
+        MATE_SCORE = 100000
         if board.is_checkmate():
-            # If it's maximizer's turn and they're checkmated, they lost
-            if is_maximizing:
-                return float('-inf') + depth  # Losing score (prefer slower losses)
-            else:
-                return float('inf') - depth  # Winning score (prefer faster wins)
+            # side to move is checkmated = bad for them
+            return -MATE_SCORE + depth if board.turn == chess.WHITE else MATE_SCORE - depth
+
+        # Explicit stalemate check (draw condition)
+        if board.is_stalemate():
+            return 0.0
         
         # Draw scenarios - always return neutral evaluation
-        if (board.is_fivefold_repetition() or #stalemates will be counted afterwards for better performance
+        if (board.is_fivefold_repetition() or 
             board.is_insufficient_material() or 
             board.is_repetition()):
             return 0.0
@@ -221,7 +224,6 @@ class Engine:
         # This is the base case for the recursion
         if depth == 0:
             return self.quiescence(board, alpha, beta)
-
 
         
         
@@ -257,26 +259,32 @@ class Engine:
             max_eval = float('-inf')
 
             for idx, move in enumerate(moves):
+                # Evaluate flags BEFORE pushing (important: board.gives_check and is_capture must be called pre-push)
+                is_capture = board.is_capture(move)
+                gives_check = board.gives_check(move)
+                is_killer = move in self.killer_moves.get(depth, [])
 
                 board.push(move)
 
                 # --- LMR CONDITIONS ---
+                # NOTE: use pre-push flags; only reduce for quiet, non-check, non-killer late moves
                 if (
                     depth >= 3
                     and idx >= 3                 # late moves
-                    and not board.is_capture(move)
-                    and not board.gives_check(move)
+                    and not is_capture
+                    and not gives_check
+                    and not is_killer
                 ):
                     # reduced search
-                    eval_score = -self.minimax(board, depth-2, False, -beta, -alpha)
+                    eval_score = self.minimax(board, depth-2, False, alpha, beta, depth_count+1)
 
                     # if it unexpectedly looks good, re-search at full depth
                     if eval_score > alpha:
-                        eval_score = -self.minimax(board, depth-1, False, -beta, -alpha)
+                        eval_score = self.minimax(board, depth-1, False, alpha, beta, depth_count+1)
 
                 else:
-                    # normal search
-                    eval_score = -self.minimax(board, depth-1, False, -beta, -alpha)
+                    # normal search (pure minimax: no sign-negation)
+                    eval_score = self.minimax(board, depth-1, False, alpha, beta, depth_count+1)
 
                 board.pop()
 
@@ -287,9 +295,9 @@ class Engine:
                     alpha = eval_score
 
                 if alpha >= beta:
-                    # storing this move as agood move:
+                    # storing this move as a good move:
                     self.history[move.from_square][move.to_square] += depth_count * depth_count
-                    # storing killer moves
+                    # storing killer moves 
                     if depth not in self.killer_moves:
                         self.killer_moves[depth] = []
 
@@ -298,10 +306,11 @@ class Engine:
                         # limit to 2
                         self.killer_moves[depth] = self.killer_moves[depth][:2]
 
+                    # Beta cutoff at maximizing node -> LOWERBOUND
                     self.tt_store(key, depth, alpha, "LOWERBOUND")
                     return alpha
 
-            # no cutoff: set flag based on original window
+            # no cutoff: set flag based on original window 
             if max_eval <= alpha_orig:
                 flag = "UPPERBOUND"
             elif max_eval >= beta:
@@ -312,7 +321,7 @@ class Engine:
             self.tt_store(key, depth, max_eval, flag)
             return max_eval
         # =============================================================================
-        # MINIMIZING PLAYER - White's turn (or whoever is maximizing)
+        # MINIMIZING PLAYER - Black's turn (or whoever is minimizing)
         # =============================================================================
         else:
             beta_orig = beta
@@ -320,23 +329,29 @@ class Engine:
             min_eval = float('inf')
 
             for idx, move in enumerate(moves):
+                # Evaluate flags BEFORE pushing
+                is_capture = board.is_capture(move)
+                gives_check = board.gives_check(move)
+                is_killer = move in self.killer_moves.get(depth, [])
 
                 board.push(move)
 
                 # --- LMR CONDITIONS ---
+                # For minimizing side: only reduce quiet/non-check/non-killer late moves
                 if (
                     depth >= 3
                     and idx >= 3
-                    and not board.is_capture(move)
-                    and not board.gives_check(move)
+                    and not is_capture
+                    and not gives_check
+                    and not is_killer
                 ):
-                    eval_score = -self.minimax(board, depth-2, True, -beta, -alpha)
+                    eval_score = self.minimax(board, depth-2, True, alpha, beta, depth_count+1)
 
-                    # re-search condition reversed for minimizing side
+                    # re-search condition for minimizing side: if reduced search gave a value that improves beta, re-search full depth
                     if eval_score < beta:
-                        eval_score = -self.minimax(board, depth-1, True, -beta, -alpha)
+                        eval_score = self.minimax(board, depth-1, True, alpha, beta, depth_count+1)
                 else:
-                    eval_score = -self.minimax(board, depth-1, True, -beta, -alpha)
+                    eval_score = self.minimax(board, depth-1, True, alpha, beta, depth_count+1)
 
 
                 board.pop()
@@ -348,7 +363,7 @@ class Engine:
                     beta = eval_score
 
                 if beta <= alpha:
-                    # history update
+                    # history update on cutoff
                     self.history[move.from_square][move.to_square] += depth_count * depth_count
 
                     # killer moves
@@ -360,20 +375,22 @@ class Engine:
                         self.killer_moves[depth].insert(0, move)
                         self.killer_moves[depth] = self.killer_moves[depth][:2]
 
-
+                    # Alpha cutoff at minimizing node -> UPPERBOUND
                     self.tt_store(key, depth, beta, "UPPERBOUND")
                     return beta
 
 
-            if min_eval >= beta_orig:
-                flag = "LOWERBOUND"
-            elif min_eval <= alpha_orig:
+            # set flag based on original window (use original alpha/beta)
+            if min_eval <= alpha_orig:
                 flag = "UPPERBOUND"
+            elif min_eval >= beta_orig:
+                flag = "LOWERBOUND"
             else:
                 flag = "EXACT"
 
             self.tt_store(key, depth, min_eval, flag)
             return min_eval
+
     def best_move(self, board: 'chess.Board', depth: int) -> tuple:
         """
         Determines the optimal move for the current player using minimax with alpha-beta pruning.
@@ -421,6 +438,11 @@ class Engine:
             uci = random.choice(moves_list)   # pick random from list
             move = chess.Move.from_uci(uci)  # convert to move object
             return (move, 0)
+        
+        
+        # resett killers and history:
+        self.killer_moves = defaultdict(lambda:[None,None])
+        self.history = [[0]*64 for _ in range(64)]
 
         # =============================================================================
         # DETERMINE PERSPECTIVE - Which player is making the move
@@ -450,7 +472,7 @@ class Engine:
         # ordered_moves() returns legal moves sorted by likely strength
         # This improves alpha-beta pruning efficiency at the root level
         # Good moves (captures, promotions) are examined first
-        moves = ordered_moves(board)
+        moves = ordered_moves(board, self.killer_moves, depth, self.history)
         
         # =============================================================================
         # EDGE CASE - No legal moves available
@@ -459,7 +481,7 @@ class Engine:
         # If there are no legal moves, the game is over (checkmate or stalemate)
         # Return None for move and current evaluation
         if not moves:
-            return None, self.evaluate(board)
+            return None,evaluate_board(board)
         
         # =============================================================================
         # ROOT MOVE ITERATION - Evaluate each legal move
@@ -469,6 +491,10 @@ class Engine:
         # Always start with full window since we need to evaluate all moves at root
         alpha = float('-inf')  # Best score maximizer can guarantee
         beta = float('inf')    # Best score minimizer can guarantee
+        
+        # Track original alpha for TT flag determination
+        alpha_orig = alpha
+        beta_orig = beta
         
         for move in moves:
             # ---------------------------------------------------------------------
@@ -524,13 +550,33 @@ class Engine:
                 break
         
         # =============================================================================
+        # Store root position in transposition table
+        # =============================================================================
+        key = self.compute_hash(board)
+        
+        # Determine TT flag based on final evaluation vs original window
+        if is_maximizing:
+            if best_evaluation <= alpha_orig:
+                flag = "UPPERBOUND"
+            elif best_evaluation >= beta_orig:
+                flag = "LOWERBOUND"
+            else:
+                flag = "EXACT"
+        else:
+            if best_evaluation <= alpha_orig:
+                flag = "UPPERBOUND"
+            elif best_evaluation >= beta_orig:
+                flag = "LOWERBOUND"
+            else:
+                flag = "EXACT"
+        
+        self.tt_store(key, depth, best_evaluation, flag)
+        
+        # =============================================================================
         # RETURN RESULTS
         # =============================================================================
         
         return best_move_found, best_evaluation
-
-
-
     def self_play(self, depth: int = 3, max_moves: int = 150):
         print("\n" + "="*50)
         print("       SELF-PLAY GAME STARTING")
@@ -704,11 +750,11 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    e.self_play(3, 5000)
+    e.self_play(4, 50)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
-    # e.compare(depth1=3,depth2=3,max_moves=25)
-    # e.play_against_human(chess.WHITE,5)
+    # e.compare(depth1=1,depth2=3,max_moves=25)
+    # e.play_against_human(chess.WHITE,4)
     
     '''legendry game against @chess.com zamanatop:
     [Event "?"]
