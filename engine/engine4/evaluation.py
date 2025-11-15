@@ -1,8 +1,5 @@
 import chess
-import chess.pgn
-import random
-import json
-
+import math
 
 
 # values set according to stockfish
@@ -67,6 +64,17 @@ piece_square_table= {
             -4,   3, -14, -50, -57, -18,  13,   4,
             17,  30,  -3, -14,   6,  -1,  40,  18),
 }
+def get_current_material(board):
+    total = 0
+    for piece_type, value in PIECE_VALUES.items():
+        if piece_type == chess.KING:
+            continue
+        
+        total += len(board.pieces(piece_type, chess.WHITE)) * value
+        total += len(board.pieces(piece_type, chess.BLACK)) * value
+
+    return total
+
 def evaluate(board: 'chess.Board') -> float:
     """
     Static evaluation function for chess positions.
@@ -94,11 +102,14 @@ def evaluate(board: 'chess.Board') -> float:
     # =============================================================================
     # CONFIGURATION - Tunable weights for different evaluation factors
     # =============================================================================
-    
-    KING_SAFETY_WEIGHT = 10    # Penalty for being in check (in centipawns)
+    MAX_MATERIAL = 3887 * 2   # both sides
+    current_material = get_current_material(board)
+    phase = current_material / MAX_MATERIAL
+
+    KING_SAFETY_WEIGHT = 30    # Penalty for being in check (in centipawns)
     MOBILITY_WEIGHT = 0.1      # Weight per legal move available
     MATE_VALUE = 999999     #constant for expressing mate value
-    
+    BISHOP_PAIR_BASE=40
     # =============================================================================
     # SCORE ACCUMULATORS - Track different aspects of position
     # =============================================================================
@@ -107,7 +118,8 @@ def evaluate(board: 'chess.Board') -> float:
     positional_score = 0    # Positional bonuses from piece placement
     king_safety_score = 0   # King safety penalties
     mobility_score = 0      # Advantage from having more moves available
-    
+    bishop_pair = 0
+
     # =============================================================================
     # MATERIAL & POSITIONAL EVALUATION
     # =============================================================================
@@ -128,14 +140,15 @@ def evaluate(board: 'chess.Board') -> float:
         
         # Evaluate White's piece placement using piece-square tables
         # PST gives bonuses for pieces on good squares (e.g., knights in center)
+        # we want the positional advantage to be least considerable in endgame
         for square in white_pieces:
-            positional_score += piece_square_table[piece_type][square]
+            positional_score += (piece_square_table[piece_type][square])*phase
         
         # Evaluate Black's piece placement
         # Mirror the board (flip vertically) since PST is designed for White's perspective
         for square in black_pieces:
             mirrored_square = chess.square_mirror(square)
-            positional_score -= piece_square_table[piece_type][mirrored_square]
+            positional_score -=( piece_square_table[piece_type][mirrored_square])*phase
     
     # =============================================================================
     # KING SAFETY EVALUATION
@@ -145,10 +158,14 @@ def evaluate(board: 'chess.Board') -> float:
     if board.is_check():
         # If White is in check, subtract penalty (bad for White)
         # If Black is in check, add bonus (good for White)
+        # this decreases in endgames but mustn't reach 0
         if board.turn == chess.WHITE:
-            king_safety_score = -KING_SAFETY_WEIGHT
+            king_safety_score = KING_SAFETY_WEIGHT * (0.3 + 0.7 * phase)
+
+
         else:
-            king_safety_score = KING_SAFETY_WEIGHT
+            king_safety_score =-KING_SAFETY_WEIGHT * (0.3 + 0.7 * phase)
+
     
     # =============================================================================
     # MOBILITY EVALUATION
@@ -156,12 +173,24 @@ def evaluate(board: 'chess.Board') -> float:
     
     # More legal moves = more tactical options and flexibility
     # Count legal moves for the side to move
-    white_moves = len(list(board.legal_moves))
-    board.push(chess.Move.null())
-    black_moves = len(list(board.legal_moves))
-    board.pop()
+    white_board = board.copy()
+    white_board.turn = chess.WHITE
+    white_moves = len(list(white_board.legal_moves))
 
-    mobility_score = (white_moves - black_moves) * MOBILITY_WEIGHT
+    black_board = board.copy()
+    black_board.turn = chess.BLACK
+    black_moves = len(list(black_board.legal_moves))
+
+
+    # it decreases in endgame
+    mobility_score = (white_moves - black_moves) * MOBILITY_WEIGHT*phase
+
+    #bishop pair advantage calculation
+    if len(board.pieces(chess.BISHOP, chess.WHITE)) == 2:
+        bishop_pair += BISHOP_PAIR_BASE
+    if len(board.pieces(chess.BISHOP, chess.BLACK)) == 2:
+        bishop_pair -=BISHOP_PAIR_BASE
+
 
     # =============================================================================
     # COMBINE ALL FACTORS
@@ -173,7 +202,8 @@ def evaluate(board: 'chess.Board') -> float:
         material_score +      # Dominant factor: piece count and value
         positional_score +    # Piece placement quality
         king_safety_score +   # King safety considerations
-        mobility_score        # Tactical flexibility
+        mobility_score+        # Tactical flexibility
+        bishop_pair             #bishop pair advantage
     )
     
     return total_evaluation
@@ -313,6 +343,7 @@ if __name__ == "__main__":
     "Pawn Storm": "rnbq1rk1/ppppppbp/6p1/8/3PP3/2N2N2/PPP2PPP/R1BQ1RK1 w - - 0 6",
 }
     b=chess.Board()
+    # print(get_current_material(b))
     for name in tests:
         b.set_fen(tests[name])
         print(f'{name}:{tests[name]}-->{evaluate(b)}')
