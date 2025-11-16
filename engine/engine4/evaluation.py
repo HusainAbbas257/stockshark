@@ -19,7 +19,7 @@ piece_square_table= {
             78,  83,  86,  73, 102,  82,  85,  90,
              7,  29,  21,  44,  40,  31,  44,   7,
            -17,  16,  -2,  15,  14,   0,  15, -13,
-           -26,   3,  10,   9,   6,   1,   0, -23,
+           -26,   3,  10,   20,   20,   1,   0, -23,
            -22,   9,   5, -11, -10,  -2,   3, -19,
            -31,   8,  -7, -37, -36, -14,   3, -31,
              0,   0,   0,   0,   0,   0,   0,   0),
@@ -37,7 +37,7 @@ piece_square_table= {
             25,  17,  20,  34,  26,  25,  15,  10,
             13,  10,  17,  23,  17,  16,   0,   7,
             14,  25,  24,  15,   8,  25,  20,  15,
-            19,  20,  11,   6,   7,   6,  20,  16,
+            19,  30,  11,   6,   7,   6,  30,  16,
             -7,   2, -15, -12, -14, -15, -10, -10),
     chess.ROOK: (  35,  29,  33,   4,  37,  33,  56,  50,
             55,  29,  56,  67,  55,  62,  34,  60,
@@ -46,7 +46,7 @@ piece_square_table= {
            -28, -35, -16, -21, -13, -29, -46, -30,
            -42, -28, -42, -25, -25, -35, -26, -46,
            -53, -38, -31, -26, -29, -43, -44, -53,
-           -30, -24, -18,   5,  -2, -18, -31, -32),
+           -30, -60, -18,   20,  20, 10, -60, -32),
     chess.QUEEN: (   6,   1,  -8,-104,  69,  24,  88,  26,
             14,  32,  60, -10,  20,  76,  57,  24,
             -2,  43,  32,  60,  72,  63,  43,   2,
@@ -61,8 +61,8 @@ piece_square_table= {
            -55,  50,  11,  -4, -19,  13,   0, -49,
            -55, -43, -52, -28, -51, -47,  -8, -50,
            -47, -42, -43, -79, -64, -32, -29, -32,
-            -4,   3, -14, -50, -57, -18,  13,   4,
-            17,  30,  -3, -14,   6,  -1,  40,  18),
+            -4,   3, -14, -50, -57, -30,  13,   4,
+            17,  30,  45, -30,   6,  -30,  40,  18),
 }
 def get_current_material(board):
     total = 0
@@ -74,7 +74,116 @@ def get_current_material(board):
         total += len(board.pieces(piece_type, chess.BLACK)) * value
 
     return total
+def king_trop(board: chess.Board):
+    """
+    Full Stockfish-like king danger evaluation.
+    Includes:
+    - attack units
+    - attack weights
+    - king zone control
+    - attacker count
+    - king tropism (enemy king distance)
+    - pawn shield & pawn storm
+    Final score: whiteSafety - blackSafety
+    """
 
+    # -----------------------
+    # Stockfish-style tables
+    # -----------------------
+
+    PIECE_ATTACK_WEIGHT = {
+        chess.PAWN: 2,
+        chess.KNIGHT: 5,
+        chess.BISHOP: 5,
+        chess.ROOK: 7,
+        chess.QUEEN: 10,
+        chess.KING: 0
+    }
+
+    # penalty table based on total attack units
+    KING_DANGER_TABLE = [
+        0, 0, 10, 20, 35, 60, 90, 130, 180, 240, 310, 390, 480, 580,
+        690, 810, 940, 1080, 1230, 1390, 1560
+    ]
+
+    # ------------------------
+    # Helper: king tropism
+    # ------------------------
+    def king_tropism(attacker_square, king_square):
+        # Manhattan distance works best for chess engines
+        f1, r1 = chess.square_file(attacker_square), chess.square_rank(attacker_square)
+        f2, r2 = chess.square_file(king_square), chess.square_rank(king_square)
+        return 14 - (abs(f1 - f2) + abs(r1 - r2))
+
+    # ------------------------
+    # Evaluate one side's king
+    # ------------------------
+    def eval_side(color):
+        king_sq = board.king(color)
+        if king_sq is None:
+            return 0
+
+        enemy = not color
+
+        king_zone = chess.BB_KING_ATTACKS[king_sq] | chess.BB_SQUARES[king_sq]
+
+        attack_units = 0
+        tropism_score = 0
+        attackers_count = 0
+
+        # scan enemy pieces attacking king zone
+        for sq in board.piece_map():
+            piece = board.piece_at(sq)
+            if piece.color != enemy:
+                continue
+
+            if any(board.attacks(sq) & king_zone):
+                attackers_count += 1
+                attack_units += PIECE_ATTACK_WEIGHT[piece.piece_type]
+                tropism_score += king_tropism(sq, king_sq)
+
+        # get danger index (clamped)
+        danger_index = min(attack_units, len(KING_DANGER_TABLE) - 1)
+        base_danger = KING_DANGER_TABLE[danger_index]
+
+        # include tropism
+        base_danger += tropism_score * 4
+
+        # pawn shield penalty
+        def pawn_shield():
+            rank = chess.square_rank(king_sq)
+            file = chess.square_file(king_sq)
+            score = 0
+            direction = 1 if color == chess.WHITE else -1
+
+            for df in [-1, 0, 1]:
+                f = file + df
+                r = rank + direction
+                if 0 <= f < 8 and 0 <= r < 8:
+                    sq = chess.square(f, r)
+                    piece = board.piece_at(sq)
+                    if piece is None:
+                        score += 15  # missing pawn = danger
+                    elif piece.color != color or piece.piece_type != chess.PAWN:
+                        score += 25  # wrong pawn = bigger danger
+            return score
+
+        base_danger += pawn_shield()
+
+        return base_danger
+
+    # ------------------------
+    # Final score
+    # ------------------------
+    white_danger = eval_side(chess.WHITE)
+    black_danger = eval_side(chess.BLACK)
+
+    # engine returns GOOD = positive, BAD = negative
+    # danger means negative
+    return (black_danger - white_danger) / 10  # convert to centipawns
+
+    
+    
 def evaluate(board: 'chess.Board') -> float:
     """
     Static evaluation function for chess positions.
@@ -119,7 +228,7 @@ def evaluate(board: 'chess.Board') -> float:
     king_safety_score = 0   # King safety penalties
     mobility_score = 0      # Advantage from having more moves available
     bishop_pair = 0
-
+    king_tropism=0
     # =============================================================================
     # MATERIAL & POSITIONAL EVALUATION
     # =============================================================================
@@ -192,6 +301,10 @@ def evaluate(board: 'chess.Board') -> float:
         bishop_pair -=BISHOP_PAIR_BASE
 
 
+    # =============================================================================
+    # KING TROPISM  EVALUATION
+    # =============================================================================
+    king_tropism+=king_trop(board)
     # =============================================================================
     # COMBINE ALL FACTORS
     # =============================================================================

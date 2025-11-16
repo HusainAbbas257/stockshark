@@ -6,8 +6,10 @@ import json
 from collections import defaultdict
 import os
 
-# FIXED: Use relative path instead of hardcoded absolute path
-opening_file_path = os.path.join(os.path.dirname(__file__), 'data', 'opening.json')
+# FIXED: Use relative path instead of hardcoded absolute 
+# FIX 2: softcoded code is not working properly so for now we currently use hardcoded
+# opening_file_path = os.path.join(os.path.dirname(__file__), 'data', 'opening.json')
+opening_file_path=r'C:\Users\dell\Desktop\stockshark\data\opening.json'
 
 # Zobrist Table (Global)
 ZOBRIST_PIECES = {}
@@ -126,51 +128,53 @@ class Engine:
 
         # Only search captures where you take equal or higher value
         return piece_to.piece_type >= piece_from.piece_type
-
-    def quiescence(self, board, alpha, beta, depth=0, max_q=4):
-        # stop if too deep
+    def quiescence(self, board, alpha, beta, is_maximizing, depth=0, max_q=4):
         if depth >= max_q:
-            eval_result = evaluate_board(board)
-            # ADDED: Sanity check for evaluation function returning infinity
-            if abs(eval_result) > 90000:
-                # If eval returns near-infinity, it's likely wrong - use 0 instead
-                return 0.0
-            return eval_result
+            return evaluate_board(board)
 
         stand_pat = evaluate_board(board)
-        
-        # ADDED: Sanity check - evaluation should never be infinity in non-terminal positions
-        if abs(stand_pat) > 90000:
-            stand_pat = 0.0
 
-        # Beta-cutoff (fail hard)
-        if stand_pat >= beta:
-            return beta
+        # Fail-hard conditions
+        if is_maximizing:
+            if stand_pat >= beta:
+                return beta
+            if stand_pat > alpha:
+                alpha = stand_pat
+        else:
+            if stand_pat <= alpha:
+                return alpha
+            if stand_pat < beta:
+                beta = stand_pat
 
-        # Raise alpha (fail soft)
-        if stand_pat > alpha:
-            alpha = stand_pat
-
-        # Only search good captures
+        # Search only captures
         for move in board.legal_moves:
             if not board.is_capture(move):
                 continue
 
-            # optional: skip stupid sacrifices
-            if not self.is_good_capture(board, move):
-                continue
-
             board.push(move)
-            # Negamax negation - simpler and standard for quiescence
-            score = -self.quiescence(board, -beta, -alpha, depth + 1, max_q)
+            score = self.quiescence(
+                board,
+                alpha,
+                beta,
+                not is_maximizing,
+                depth + 1,
+                max_q
+            )
             board.pop()
 
-            if score >= beta:
-                return beta
-            if score > alpha:
-                alpha = score
+            if is_maximizing:
+                if score >= beta:
+                    return beta
+                if score > alpha:
+                    alpha = score
+            else:
+                if score <= alpha:
+                    return alpha
+                if score < beta:
+                    beta = score
 
-        return alpha
+        return alpha if is_maximizing else beta
+
         
     def minimax(self, board: 'chess.Board', depth: int, is_maximizing: bool, alpha: float = float('-inf'), beta: float = float('inf'),depth_count=1) -> float:
         """
@@ -223,7 +227,8 @@ class Engine:
         # When depth reaches 0, evaluate the position statically
         # This is the base case for the recursion
         if depth == 0:
-            return self.quiescence(board, alpha, beta)
+            return self.quiescence(board, alpha, beta, is_maximizing)
+
 
         
         
@@ -433,8 +438,8 @@ class Engine:
         
         fen = board.fen()
         moves_list = self.opening.get(fen)
-
         if moves_list is not None:
+            print('picking from from opening book...')
             uci = random.choice(moves_list)   # pick random from list
             move = chess.Move.from_uci(uci)  # convert to move object
             return (move, 0)
@@ -754,7 +759,7 @@ if __name__ == "__main__":
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
     # e.compare(depth1=1,depth2=3,max_moves=25)
-    # e.play_against_human(chess.WHITE,4)
+    # e.play_against_human(chess.BLACK,4)
     
     '''legendry game against @chess.com zamanatop:
     [Event "?"]
