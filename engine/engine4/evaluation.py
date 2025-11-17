@@ -11,36 +11,35 @@ PIECE_VALUES = {
     chess.QUEEN: 929,     
     chess.KING: 60000      
 }
-
 opening_values = {
-    "KING_SAFETY_WEIGHT": 10,
-    "MOBILITY_WEIGHT": 9.6825,
-    "MATE_VALUE": 32000,
-    "BISHOP_PAIR_BASE": 40,
-    "POSITIONAL_WEIGHT": 0.125,
-    "KING_TROP_WEIGHT": 1,
-    "DEFENCE_FACTOR": 1,
-    "ATTACK_FACTOR": 1,
+    "KING_SAFETY_WEIGHT": 8.4375,
+    "MOBILITY_WEIGHT": 0.84375,
+    "MATE_VALUE": 12000.0,
+    "BISHOP_PAIR_BASE": 5.625,
+    "POSITIONAL_WEIGHT": 0.017578125,
+    "KING_TROP_WEIGHT": 0.140625,
+    "DEFENCE_FACTOR": 0.140625,
+    "ATTACK_FACTOR": 0.133125,
 }
 middlegame_values = {
-    "KING_SAFETY_WEIGHT": 20,      # more important here
-    "MOBILITY_WEIGHT": 12,         # more pieces = more moves = more value
-    "MATE_VALUE": 32000,
-    "BISHOP_PAIR_BASE": 50,        # bishop pair stronger midboard
-    "POSITIONAL_WEIGHT": 0.15,
-    "KING_TROP_WEIGHT": 2,         # trop matters more
-    "DEFENCE_FACTOR": 1,
-    "ATTACK_FACTOR": 2,            # attacks matter more midgame
+    "KING_SAFETY_WEIGHT": 7.5,
+    "MOBILITY_WEIGHT": 4.5,
+    "MATE_VALUE": 12000,
+    "BISHOP_PAIR_BASE": 18.75,
+    "POSITIONAL_WEIGHT": 0.05625,
+    "KING_TROP_WEIGHT": 0.75,
+    "DEFENCE_FACTOR": 0.375,
+    "ATTACK_FACTOR": 0.75
 }
 endgame_values = {
-    "KING_SAFETY_WEIGHT": 2,       # almost irrelevant in endgame
-    "MOBILITY_WEIGHT": 15,         # mobility is king
-    "MATE_VALUE": 32000,
-    "BISHOP_PAIR_BASE": 20,        # bishop pair weaker here
-    "POSITIONAL_WEIGHT": 0.10,
-    "KING_TROP_WEIGHT": 0.5,       # trop less important
-    "DEFENCE_FACTOR": 1,
-    "ATTACK_FACTOR": 1,
+    "KING_SAFETY_WEIGHT": 1.0,
+    "MOBILITY_WEIGHT": 7.5,
+    "MATE_VALUE": 16000,
+    "BISHOP_PAIR_BASE": 10.0,
+    "POSITIONAL_WEIGHT": 0.05,
+    "KING_TROP_WEIGHT": 0.25,
+    "DEFENCE_FACTOR": 0.5,
+    "ATTACK_FACTOR": 0.5
 }
 
 
@@ -387,45 +386,196 @@ def ordered_moves(board: 'chess.Board', killer_moves={}, depth=0,history = [[0]*
         move_scores.sort(reverse=True, key=lambda x: x[0])
         return [m for s, m in move_scores]
 
+
+
+
+
+
+
+
+
+def auto_tune(phase: str, param: str, tests: dict, weight_range=None):
+
+    phase_maps = {
+        "opening": opening_values,
+        "middlegame": middlegame_values,
+        "endgame": endgame_values
+    }
+
+    if phase not in phase_maps:
+        raise ValueError("Invalid phase. Choose: opening/middlegame/endgame")
+
+    WEIGHTS = phase_maps[phase]
+
+    if param not in WEIGHTS:
+        raise ValueError(f"Invalid param {param}. Available: {list(WEIGHTS.keys())}")
+
+    # -----------------------------
+    # RANGE OF VALUES TO TEST
+    # -----------------------------
+    if weight_range is None:
+        # automatic reasonable tuning range
+        base = WEIGHTS[param]
+        weight_range = [base * 0.5, base * 0.75, base, base * 1.25, base * 1.5]
+
+    print("\n=========================================")
+    print(f"   AUTO TUNING PARAMETER: {param}")
+    print(f"   PHASE: {phase}")
+    print("=========================================\n")
+
+    # -----------------------------
+    # ENGINE SETUP
+    # -----------------------------
+    engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+    engine.configure({"Threads": 1, "Hash": 32})
+
+    results = {}
+
+    for value in weight_range:
+        print(f"\n------ TESTING {param} = {value} ------\n")
+
+        WEIGHTS[param] = value
+        diffs = []
+
+        for name, fen in tests.items():
+            board = chess.Board(fen)
+
+            if not board.is_valid():
+                # print(f"[SKIP] {name} -> invalid FEN.")
+                continue
+
+            my_eval = evaluate(board)  # your eval
+
+            info = engine.analyse(board, chess.engine.Limit(depth=2))
+            sf_eval = info["score"].white().score(mate_score=WEIGHTS["MATE_VALUE"])
+
+            diff = abs(my_eval - sf_eval)
+            diffs.append(diff)
+
+            # print(f"{name}:  diff = {diff}")
+            # print(f"  Yours = {my_eval}")
+            # print(f"  SF    = {sf_eval}")
+            # print("")
+
+            engine.ping()
+
+        avg = sum(diffs) / len(diffs)
+        results[value] = avg
+
+        print(f"==> AVERAGE DIFF FOR {param}={value}: {avg}\n")
+
+    engine.quit()
+
+    # -----------------------------
+    # BEST VALUE
+    # -----------------------------
+    best_value = min(results, key=results.get)
+
+    print("\n=========================================")
+    print(f"BEST VALUE FOR {param}: {best_value}")
+    print(f"AVERAGE DIFF: {results[best_value]}")
+    print("=========================================\n")
+
+    return best_value, results
+
+
+
 if __name__ == "__main__":
     tests = {
     # --- Opening Positions ---
-    "Start Position": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-    "Ruy Lopez": "rnbqkbnr/pppp1ppp/8/4p3/3P4/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3",
-    "Italian Game": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 2",
-    "Scotch Game": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-    "Sicilian Defense": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2",
-    "French Defense": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
-    "Caro-Kann": "rnbqkbnr/pp1ppppp/2p5/8/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-    "Pirc Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
-    "Kings Indian": "rnbqkb1r/pppppppp/5n2/8/3P4/5N2/PPP1PPPP/RNBQKB1R b KQkq - 1 2",
-    "English Opening": "rnbqkbnr/pppppppp/8/8/4P3/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+#   "Start Position": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+
+#     "Ruy Lopez": "rnbqkbnr/pppp1ppp/8/4p3/3P4/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3",
+#     "Italian Game": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 2",
+#     "Scotch Game": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+#     "Sicilian Defense": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2",
+#     "French Defense": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+#     "Caro-Kann Defense": "rnbqkbnr/pp1ppppp/2p5/8/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+#     "Pirc Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+#     "King's Indian Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/5N2/PPP1PPPP/RNBQKB1R b KQkq - 1 2",
+#     "English Opening": "rnbqkbnr/pppppppp/8/8/4P3/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+
+#     "Vienna Game": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+#     "Four Knights Game": "r1bqkbnr/pppp1ppp/2n5/4p3/3NP3/2N5/PPP2PPP/R1BQKB1R b KQkq - 2 3",
+#     "Petrov Defense": "rnbqkb1r/pppp1ppp/5n2/4p3/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
+#     "Philidor Defense": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+#     "Alekhine Defense": "rnbqkbnr/pppppppp/8/8/4P3/5n2/PPPP1PPP/RNBQKBNR w KQkq - 2 2",
+#     "Modern Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+
+#     "Queen's Gambit": "rnbqkbnr/ppp1pppp/8/3p4/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+#     "Slav Defense": "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+#     "Semi-Slav Defense": "rnbqkb1r/ppp1pppp/4pn2/3p4/3P4/5N2/PPP1PPPP/RNBQKB1R w KQkq - 2 3",
+#     "King's Gambit": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+#     "Queen's Indian Defense": "rnbqkb1r/pppp1ppp/5n2/4p3/2BP4/8/PPP1PPPP/RNBQK1NR b KQkq - 2 3",
+#     "Nimzo-Indian": "rnbqkb1r/pppp1ppp/4pn2/8/2BP4/5N2/PPP1PPPP/RNBQK2R b KQkq - 2 3",
+#     "Bogo-Indian": "rnbqkb1r/pppp1ppp/5n2/8/3P4/4PN2/PPP2PPP/R1BQKB1R b KQkq - 1 3",
+#     "Benoni Defense": "rnbqkbnr/ppp1pppp/8/3p4/2P5/8/PP1PPPPP/RNBQKBNR b KQkq - 0 2",
+#     "Benko Gambit": "rnbqkbnr/ppp1pppp/8/q2p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3",
+
+#     "Dutch Defense": "rnbqkbnr/pppppppp/8/8/3P1p2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+#     "Grunfeld Defense": "rnbqkb1r/ppp1pppp/5n2/3p4/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 2 3",
+#     "Catalan Opening": "rnbqkb1r/ppp2ppp/4pn2/3p4/2BPP3/5N2/PPP2PPP/RNBQK2R b KQkq - 1 3",
+#     "Trompowsky Attack": "rnbqkbnr/pppppppp/8/8/3P3B/8/PPP1PPPP/RNBQK1NR b KQkq - 1 1",
+#     "London System": "rnbqkbnr/pp1ppppp/2p5/8/3P1B2/5N2/PPP1PPPP/RN1QKB1R b KQkq - 2 2",
+#     "Colle System": "rnbqkbnr/pppppppp/8/8/3P4/3P1N2/PPP2PPP/RNBQKB1R b KQkq - 1 2",
+#     "Tarrasch Defense": "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq - 0 2",
+#     "Budapest Gambit": "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 1 2",
+
+#     "Scandinavian Defense": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 0 2",
+#     "Owen Defense": "rnbqkbnr/pppppppp/8/8/3p1b2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+#     "Horwitz Defense": "rnbqkbnr/pppp1ppp/8/4p3/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 2",
+
+#     "Reti Opening": "rnbqkbnr/pppppppp/8/8/3P4/5N2/PPP1PPPP/RNBQKB1R b KQkq - 1 1",
+#     "King's Fianchetto": "rnbqkbnr/pppppppp/8/8/4P3/6NP/PPPP1PP1/RNBQKB1R b KQkq - 0 2",
+#     "Bird Opening": "rnbqkbnr/pppppppp/8/8/3P1p2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+#     "Larsen Opening": "rnbqkbnr/pppppppp/8/8/2B5/8/PPPPPPPP/RNBQK1NR b KQkq - 1 1",
+
+#     "Evans Gambit": "rnbqkbnr/pppp1ppp/8/4p3/2BPP3/8/PPP2PPP/RNBQK1NR b KQkq - 0 3",
+#     "Fried Liver Attack": "r1bqkb1r/pppp1ppp/2n2n2/1B2p3/3NP3/8/PPP2PPP/R1BQK2R b KQkq - 6 5",
+#     "Max Lange Attack": "r1bqkb1r/pppp1ppp/2n5/1B2p3/3NP3/8/PPP2PPP/R1BQK2R b KQkq - 4 5",
+#     "Two Knights Defense": "r1bqkb1r/pppp1ppp/2n5/4p3/3NP3/8/PPP2PPP/RNBQKB1R b KQkq - 2 3",
+#     "Giuoco Pianissimo": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 2",
+
+#     "Scotch Gambit": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 1 2",
+#     "Danish Gambit": "rnbqkbnr/ppp2ppp/3p4/4p3/2PP4/8/PP3PPP/RNBQKBNR b KQkq - 0 3",
+#     "Smith-Morra Gambit": "rnbqkbnr/pp1ppppp/8/2p5/4P3/2P5/PP1P1PPP/RNBQKBNR b KQkq - 0 2",
+#     "Wing Gambit (Sicilian)": "rnbqkbnr/pp1ppppp/8/2p5/2P1P3/8/PP1P1PPP/RNBQKBNR b KQkq - 0 2",
 
     # --- Midgame Situations ---
-    "White +Pawn": "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
-    "Black +Rook": "rnbqkbnr/pppppppp/8/8/8/8/PPP5/RNBQKBNR w KQkq - 0 1",
-    "Center Locked": "r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 2 3",
-    "Open Center": "rnbqkb1r/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3",
-    "Exposed Kings": "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1",
-    "Trapped Bishop": "rnbqkbnr/pppppppp/8/8/8/2N5/PPPPPPPP/R1BQKBNR b KQkq - 2 2",
-    "Weak Pawns": "rnbqkb1r/pp1ppppp/2p5/8/3P4/8/PPP2PPP/RNBQKBNR w KQkq - 0 3",
-    "Passed Pawn": "8/8/3k4/8/3P4/8/8/3K4 w - - 0 1",
-    "Isolated Pawn": "rnbqkb1r/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 4",
-    "Doubled Pawns": "rnbqkbnr/ppp2ppp/8/3pp3/8/4P3/PPP2PPP/RNBQKBNR w KQkq - 0 4",
-
-    # --- Tactical Patterns ---
-    "Mate Threat": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 3",
-    "King Attack": "rnb1kbnr/pppp1ppp/8/4p3/3PP3/2N2N2/PPP2PPP/R1BQKB1R b KQkq - 4 4",
-    "Pinned Knight": "rnbqkbnr/pppp1ppp/8/4p3/2B5/5N2/PPPPPPPP/RNBQK2R b KQkq - 3 3",
-    "Fork Threat": "rnbqkbnr/pppp1ppp/8/4p3/2B5/8/PPPPPPPP/RNBQK1NR w KQkq - 2 3",
-    "Skewer Threat": "r3k2r/pppqppbp/2np1np1/8/2BPP3/2N2N2/PPP2PPP/R1BQ1RK1 w kq - 0 7",
-    "Discovered Attack": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 2 4",
-    "Hanging Piece": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N2N2/PPPPBPPP/R1BQK2R w KQkq - 2 4",
-    "Back Rank Weakness": "r3k2r/ppp2ppp/8/8/8/8/PPP2PPP/R3K2R w KQkq - 0 1",
-    "Overextended Pawns": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
-    "King Open File": "rnbqkbnr/pppp1ppp/8/4p3/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 2",
-
-    # --- Endgames ---
+    # "White +Pawn": "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
+    # "Black +Rook": "rnbqkbnr/pppppppp/8/8/8/8/PPP5/RNBQKBNR w KQkq - 0 1",
+    # "Center Locked": "r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 2 3",
+    # "Open Center": "rnbqkb1r/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3",
+    # "Exposed Kings": "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1",
+    # "Trapped Bishop": "rnbqkbnr/pppppppp/8/8/8/2N5/PPPPPPPP/R1BQKBNR b KQkq - 2 2",
+    # "Weak Pawns": "rnbqkb1r/pp1ppppp/2p5/8/3P4/8/PPP2PPP/RNBQKBNR w KQkq - 0 3",
+    # "Passed Pawn": "8/8/3k4/8/3P4/8/8/3K4 w - - 0 1",
+    # "Isolated Pawn": "rnbqkb1r/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 4",
+    # "Doubled Pawns": "rnbqkbnr/ppp2ppp/8/3pp3/8/4P3/PPP2PPP/RNBQKBNR w KQkq - 0 4",
+    # "Backward Pawn": "rnbqkbnr/ppp2ppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3",
+    # "Pawn Chain": "rnbqkbnr/ppp1pppp/8/3p4/3P4/2P5/PP2PPPP/RNBQKBNR b KQkq - 0 3",
+    
+    # # --- Tactical Patterns ---
+    # "Mate Threat": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 3",
+    # "King Attack": "rnb1kbnr/pppp1ppp/8/4p3/3PP3/2N2N2/PPP2PPP/R1BQKB1R b KQkq - 4 4",
+    # "Pinned Knight": "rnbqkbnr/pppp1ppp/8/4p3/2B5/5N2/PPPPPPPP/RNBQK2R b KQkq - 3 3",
+    # "Fork Threat": "rnbqkbnr/pppp1ppp/8/4p3/2B5/8/PPPPPPPP/RNBQK1NR w KQkq - 2 3",
+    # "Skewer Threat": "r3k2r/pppqppbp/2np1np1/8/2BPP3/2N2N2/PPP2PPP/R1BQ1RK1 w kq - 0 7",
+    # "Discovered Attack": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 2 4",
+    # "Hanging Piece": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N2N2/PPPPBPPP/R1BQK2R w KQkq - 2 4",
+    # "Back Rank Weakness": "r3k2r/ppp2ppp/8/8/8/8/PPP2PPP/R3K2R w KQkq - 0 1",
+    # "Overextended Pawns": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
+    # "King Open File": "rnbqkbnr/pppp1ppp/8/4p3/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 2",
+    # "Double Attack": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK2R w KQkq - 2 4",
+    # "Discovered Check": "r1bqk1nr/pppp1ppp/2n5/4p3/2B1P3/2N2Q2/PPPP1PPP/R1B1K2R b KQkq - 3 4",
+    # "Skewer + Pin": "r3k2r/pppqppbp/2np1np1/8/2BPP3/2N2Q2/PPP2PPP/R1B2RK1 w kq - 0 7",
+    
+    # --- Endgame Patterns ---
+    "King Opposition": "8/8/8/3k4/3K4/8/8/8 w - - 0 1",
+    "Lucena Position": "8/8/8/8/8/2K5/5P2/6k1 w - - 0 1",
+    "Philidor Position": "8/8/8/8/1k6/8/2K5/8 w - - 0 1",
+    "Rook Behind Passed Pawn": "8/8/8/8/4P3/8/3K4/5k2 w - - 0 1",
+    "Opposite Colored Bishops": "8/8/8/8/3b4/4B3/3K4/5k2 w - - 0 1",
     "King and Pawn": "8/8/3k4/8/3P4/8/8/3K4 w - - 0 1",
     "Rook Endgame": "8/8/3k4/8/3R4/8/8/3K4 w - - 0 1",
     "Knight Endgame": "8/8/3k4/8/3N4/8/8/3K4 w - - 0 1",
@@ -448,45 +598,8 @@ if __name__ == "__main__":
     "Knight Outpost": "rnbqkbnr/pppppppp/8/8/3N4/8/PPP2PPP/R1BQKBNR b KQkq - 0 3",
     "Pawn Storm": "rnbq1rk1/ppppppbp/6p1/8/3PP3/2N2N2/PPP2PPP/R1BQ1RK1 w - - 0 6",
 }
+    
+    for factor in endgame_values:
         
-    engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+        print(auto_tune("endgame", factor, tests))
 
-    engine.configure({
-        "Threads": 1,
-        "Hash": 32
-    })
-
-    differences = []
-
-    for name, fen in tests.items():
-        board = chess.Board(fen)
-
-        # your eval
-        my_eval = evaluate(board)
-
-        # skip invalid positions (prevents SF crash)
-        if not board.is_valid():
-            print(name, "INVALID FEN, skipping...")
-            continue
-
-        # stockfish eval depth-1
-        info = engine.analyse(board, chess.engine.Limit(depth=12))
-        sf_score = info["score"].white().score(mate_score=32000)
-
-        # difference
-        diff = abs(my_eval - sf_score)
-        differences.append(diff)
-
-        print(f"{name}:")
-        print(f"  FEN:     {fen}")
-        print(f"  Yours:   {my_eval}")
-        print(f"  SF:      {sf_score}")
-        print(f"  Diff:    {diff}")
-        print()
-
-        engine.ping()  # prevents engine from dying
-
-    engine.quit()
-
-    avg = sum(differences) / len(differences)
-    print(f"\nAVERAGE DIFFERENCE: {avg}")

@@ -440,8 +440,8 @@ class Engine:
         moves_list = self.opening.get(fen)
         if moves_list is not None:
             print('picking from from opening book...')
-            
-            uci = random.choice(moves_list)# pick random from list
+            import random as rd
+            uci = rd.choice(moves_list)# pick random from list
             move = chess.Move.from_uci(uci)  # convert to move object
             return (move, 0)
         
@@ -756,11 +756,11 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    # e.self_play(4, 150)
+    e.self_play(4, 150)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
     # e.compare(depth1=1,depth2=3,max_moves=25)
-    e.play_against_human(chess.WHITE,4)
+    # e.play_against_human(chess.WHITE,4)
     
     '''legendry game against @chess.com zamanatop:
     [Event "?"]
