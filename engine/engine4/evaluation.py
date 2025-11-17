@@ -12,6 +12,37 @@ PIECE_VALUES = {
     chess.KING: 60000      
 }
 
+opening_values = {
+    "KING_SAFETY_WEIGHT": 10,
+    "MOBILITY_WEIGHT": 9.6825,
+    "MATE_VALUE": 32000,
+    "BISHOP_PAIR_BASE": 40,
+    "POSITIONAL_WEIGHT": 0.125,
+    "KING_TROP_WEIGHT": 1,
+    "DEFENCE_FACTOR": 1,
+    "ATTACK_FACTOR": 1,
+}
+middlegame_values = {
+    "KING_SAFETY_WEIGHT": 20,      # more important here
+    "MOBILITY_WEIGHT": 12,         # more pieces = more moves = more value
+    "MATE_VALUE": 32000,
+    "BISHOP_PAIR_BASE": 50,        # bishop pair stronger midboard
+    "POSITIONAL_WEIGHT": 0.15,
+    "KING_TROP_WEIGHT": 2,         # trop matters more
+    "DEFENCE_FACTOR": 1,
+    "ATTACK_FACTOR": 2,            # attacks matter more midgame
+}
+endgame_values = {
+    "KING_SAFETY_WEIGHT": 2,       # almost irrelevant in endgame
+    "MOBILITY_WEIGHT": 15,         # mobility is king
+    "MATE_VALUE": 32000,
+    "BISHOP_PAIR_BASE": 20,        # bishop pair weaker here
+    "POSITIONAL_WEIGHT": 0.10,
+    "KING_TROP_WEIGHT": 0.5,       # trop less important
+    "DEFENCE_FACTOR": 1,
+    "ATTACK_FACTOR": 1,
+}
+
 
 #Big thanks to : https://github.com/thomasahle/sunfish.git
 piece_square_table= {
@@ -74,115 +105,68 @@ def get_current_material(board):
         total += len(board.pieces(piece_type, chess.BLACK)) * value
 
     return total
-def king_trop(board: chess.Board):
-    """
-    Full Stockfish-like king danger evaluation.
-    Includes:
-    - attack units
-    - attack weights
-    - king zone control
-    - attacker count
-    - king tropism (enemy king distance)
-    - pawn shield & pawn storm
-    Final score: whiteSafety - blackSafety
-    """
 
-    # -----------------------
-    # Stockfish-style tables
-    # -----------------------
-
-    PIECE_ATTACK_WEIGHT = {
-        chess.PAWN: 2,
-        chess.KNIGHT: 5,
-        chess.BISHOP: 5,
-        chess.ROOK: 7,
-        chess.QUEEN: 10,
-        chess.KING: 0
-    }
-
-    # penalty table based on total attack units
-    KING_DANGER_TABLE = [
-        0, 0, 10, 20, 35, 60, 90, 130, 180, 240, 310, 390, 480, 580,
-        690, 810, 940, 1080, 1230, 1390, 1560
-    ]
-
-    # ------------------------
-    # Helper: king tropism
-    # ------------------------
-    def king_tropism(attacker_square, king_square):
-        # Manhattan distance works best for chess engines
-        f1, r1 = chess.square_file(attacker_square), chess.square_rank(attacker_square)
-        f2, r2 = chess.square_file(king_square), chess.square_rank(king_square)
-        return 14 - (abs(f1 - f2) + abs(r1 - r2))
-
-    # ------------------------
-    # Evaluate one side's king
-    # ------------------------
-    def eval_side(color):
-        king_sq = board.king(color)
-        if king_sq is None:
-            return 0
-
-        enemy = not color
-
-        king_zone = chess.BB_KING_ATTACKS[king_sq] | chess.BB_SQUARES[king_sq]
-
-        attack_units = 0
-        tropism_score = 0
-        attackers_count = 0
-
-        # scan enemy pieces attacking king zone
-        for sq in board.piece_map():
-            piece = board.piece_at(sq)
-            if piece.color != enemy:
-                continue
-
-            if any(board.attacks(sq) & king_zone):
-                attackers_count += 1
-                attack_units += PIECE_ATTACK_WEIGHT[piece.piece_type]
-                tropism_score += king_tropism(sq, king_sq)
-
-        # get danger index (clamped)
-        danger_index = min(attack_units, len(KING_DANGER_TABLE) - 1)
-        base_danger = KING_DANGER_TABLE[danger_index]
-
-        # include tropism
-        base_danger += tropism_score * 4
-
-        # pawn shield penalty
-        def pawn_shield():
-            rank = chess.square_rank(king_sq)
-            file = chess.square_file(king_sq)
-            score = 0
-            direction = 1 if color == chess.WHITE else -1
-
-            for df in [-1, 0, 1]:
-                f = file + df
-                r = rank + direction
-                if 0 <= f < 8 and 0 <= r < 8:
-                    sq = chess.square(f, r)
-                    piece = board.piece_at(sq)
-                    if piece is None:
-                        score += 15  # missing pawn = danger
-                    elif piece.color != color or piece.piece_type != chess.PAWN:
-                        score += 25  # wrong pawn = bigger danger
-            return score
-
-        base_danger += pawn_shield()
-
-        return base_danger
-
-    # ------------------------
-    # Final score
-    # ------------------------
-    white_danger = eval_side(chess.WHITE)
-    black_danger = eval_side(chess.BLACK)
-
-    # engine returns GOOD = positive, BAD = negative
-    # danger means negative
-    return (black_danger - white_danger) / 10  # convert to centipawns
-
+def get_neighbour(board: chess.Board, piece: chess.Piece) -> list:
+    # find piece square
+    square = None
+    for sq in chess.SQUARES:
+        if board.piece_at(sq) == piece:
+            square = sq
+            break
     
+    if square is None:
+        return []
+
+    neighbours = []
+    rank = chess.square_rank(square)
+    file = chess.square_file(square)
+
+    # 8 surrounding directions
+    for dr in (-1, 0, 1):
+        for df in (-1, 0, 1):
+            if dr == 0 and df == 0:
+                continue
+            nr = rank + dr
+            nf = file + df
+            if 0 <= nr < 8 and 0 <= nf < 8:
+                neighbours.append(chess.square(nf, nr))
+
+    return neighbours
+
+
+def king_trop(board: chess.Board,weight):
+    wk = board.king(chess.WHITE)
+    bk = board.king(chess.BLACK)
+
+    trop_white = 0
+    trop_black = 0
+
+    # WHITE KING
+    for nb in get_neighbour(board, board.piece_at(wk)):
+        piece = board.piece_at(nb)
+
+        # defence: friendly pieces near king
+        if piece and piece.color == chess.WHITE:
+            trop_white += weight['DEFENCE_FACTOR']
+
+        # attack: enemy pieces attacking that square
+        attackers = board.attackers(chess.BLACK, nb)
+        if attackers:
+            trop_white -= weight['ATTACK_FACTOR'] * len(attackers)
+
+    # BLACK KING
+    for nb in get_neighbour(board, board.piece_at(bk)):
+        piece = board.piece_at(nb)
+
+        if piece and piece.color == chess.BLACK:
+            trop_black += weight['DEFENCE_FACTOR']
+
+        attackers = board.attackers(chess.WHITE, nb)
+        if attackers:
+            trop_black -= weight['ATTACK_FACTOR'] * len(attackers)
+
+    # return a score (white positive → black king worse)
+    return trop_white - trop_black
     
 def evaluate(board: 'chess.Board') -> float:
     """
@@ -211,17 +195,24 @@ def evaluate(board: 'chess.Board') -> float:
     # =============================================================================
     # CONFIGURATION - Tunable weights for different evaluation factors
     # =============================================================================
-    MAX_MATERIAL = 3887 * 2   # both sides
+    MAX_MATERIAL = 3887 * 2
     current_material = get_current_material(board)
-    phase = current_material / MAX_MATERIAL
+    phase = current_material / MAX_MATERIAL   # 1 = opening, 0 = endgame
 
-    KING_SAFETY_WEIGHT = 10  # Penalty for being in check (in centipawns)
-    MOBILITY_WEIGHT =9.6825# Weight per legal move available
-    MATE_VALUE = 32000          #constant for expressing mate value
-    BISHOP_PAIR_BASE=40
-    POSITIONAL_WEIGHT=0.125
-    
-    # =============================================================================
+    # ---- Pick phase weights ----
+    if phase > 0.66:
+        # Opening phase
+        weights = opening_values.copy()
+
+    elif phase > 0.33:
+        # Middlegame phase
+        weights = middlegame_values.copy()
+
+    else:
+        # Endgame phase
+        weights = endgame_values.copy()
+
+    # =============================================================
     # SCORE ACCUMULATORS - Track different aspects of position
     # =============================================================================
     
@@ -237,7 +228,7 @@ def evaluate(board: 'chess.Board') -> float:
     
     # returning infinity breaks the alpha beta pruning
     if board.is_checkmate():
-        return -MATE_VALUE if board.turn else MATE_VALUE
+        return -weights['MATE_VALUE'] if board.turn else weights['MATE_VALUE']
 
     # Iterate through each piece type (pawn, knight, bishop, rook, queen, king)
     for piece_type, value in PIECE_VALUES.items():
@@ -253,13 +244,13 @@ def evaluate(board: 'chess.Board') -> float:
         # PST gives bonuses for pieces on good squares (e.g., knights in center)
         # we want the positional advantage to be least considerable in endgame
         for square in white_pieces:
-            positional_score += (piece_square_table[piece_type][square])*phase*POSITIONAL_WEIGHT
+            positional_score += (piece_square_table[piece_type][square])*weights['POSITIONAL_WEIGHT']
         
         # Evaluate Black's piece placement
         # Mirror the board (flip vertically) since PST is designed for White's perspective
         for square in black_pieces:
             mirrored_square = chess.square_mirror(square)
-            positional_score -=( piece_square_table[piece_type][mirrored_square])*phase*POSITIONAL_WEIGHT
+            positional_score -=( piece_square_table[piece_type][mirrored_square])*weights['POSITIONAL_WEIGHT']
     
     # =============================================================================
     # KING SAFETY EVALUATION
@@ -271,11 +262,11 @@ def evaluate(board: 'chess.Board') -> float:
         # If Black is in check, add bonus (good for White)
         # this decreases in endgames but mustn't reach 0
         if board.turn == chess.WHITE:
-            king_safety_score = KING_SAFETY_WEIGHT * (0.3 + 0.7 * phase)
+            king_safety_score = weights["KING_SAFETY_WEIGHT"]* (0.3 + 0.7 * phase)
 
 
         else:
-            king_safety_score =-KING_SAFETY_WEIGHT * (0.3 + 0.7 * phase)
+            king_safety_score =-weights["KING_SAFETY_WEIGHT"] * (0.3 + 0.7 * phase)
 
     
     # =============================================================================
@@ -294,19 +285,19 @@ def evaluate(board: 'chess.Board') -> float:
 
 
     # it decreases in endgame
-    mobility_score = (white_moves - black_moves) * MOBILITY_WEIGHT*phase
+    mobility_score = (white_moves - black_moves) * weights['MOBILITY_WEIGHT']*phase
 
     #bishop pair advantage calculation
     if len(board.pieces(chess.BISHOP, chess.WHITE)) == 2:
-        bishop_pair += BISHOP_PAIR_BASE
+        bishop_pair += weights['BISHOP_PAIR_BASE']
     if len(board.pieces(chess.BISHOP, chess.BLACK)) == 2:
-        bishop_pair -=BISHOP_PAIR_BASE
+        bishop_pair -=weights['BISHOP_PAIR_BASE']
 
 
     # =============================================================================
     # KING TROPISM  EVALUATION
     # =============================================================================
-    king_tropism+=king_trop(board)
+    king_tropism+=king_trop(board,weights)*weights['KING_TROP_WEIGHT']
     # =============================================================================
     # COMBINE ALL FACTORS
     # =============================================================================
