@@ -1,7 +1,7 @@
 import chess
 import math
-
-
+import chess.engine
+STOCKFISH_PATH=r'C:\Users\dell\Desktop\stockshark\tests\stockfish\stockfish-windows-x86-64.exe'
 # values set according to stockfish
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -215,10 +215,12 @@ def evaluate(board: 'chess.Board') -> float:
     current_material = get_current_material(board)
     phase = current_material / MAX_MATERIAL
 
-    KING_SAFETY_WEIGHT = 30    # Penalty for being in check (in centipawns)
-    MOBILITY_WEIGHT = 0.1      # Weight per legal move available
-    MATE_VALUE = 999999     #constant for expressing mate value
+    KING_SAFETY_WEIGHT = 10  # Penalty for being in check (in centipawns)
+    MOBILITY_WEIGHT =9.6825# Weight per legal move available
+    MATE_VALUE = 32000          #constant for expressing mate value
     BISHOP_PAIR_BASE=40
+    POSITIONAL_WEIGHT=0.125
+    
     # =============================================================================
     # SCORE ACCUMULATORS - Track different aspects of position
     # =============================================================================
@@ -251,13 +253,13 @@ def evaluate(board: 'chess.Board') -> float:
         # PST gives bonuses for pieces on good squares (e.g., knights in center)
         # we want the positional advantage to be least considerable in endgame
         for square in white_pieces:
-            positional_score += (piece_square_table[piece_type][square])*phase
+            positional_score += (piece_square_table[piece_type][square])*phase*POSITIONAL_WEIGHT
         
         # Evaluate Black's piece placement
         # Mirror the board (flip vertically) since PST is designed for White's perspective
         for square in black_pieces:
             mirrored_square = chess.square_mirror(square)
-            positional_score -=( piece_square_table[piece_type][mirrored_square])*phase
+            positional_score -=( piece_square_table[piece_type][mirrored_square])*phase*POSITIONAL_WEIGHT
     
     # =============================================================================
     # KING SAFETY EVALUATION
@@ -455,8 +457,45 @@ if __name__ == "__main__":
     "Knight Outpost": "rnbqkbnr/pppppppp/8/8/3N4/8/PPP2PPP/R1BQKBNR b KQkq - 0 3",
     "Pawn Storm": "rnbq1rk1/ppppppbp/6p1/8/3PP3/2N2N2/PPP2PPP/R1BQ1RK1 w - - 0 6",
 }
-    b=chess.Board()
-    # print(get_current_material(b))
-    for name in tests:
-        b.set_fen(tests[name])
-        print(f'{name}:{tests[name]}-->{evaluate(b)}')
+        
+    engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+
+    engine.configure({
+        "Threads": 1,
+        "Hash": 32
+    })
+
+    differences = []
+
+    for name, fen in tests.items():
+        board = chess.Board(fen)
+
+        # your eval
+        my_eval = evaluate(board)
+
+        # skip invalid positions (prevents SF crash)
+        if not board.is_valid():
+            print(name, "INVALID FEN, skipping...")
+            continue
+
+        # stockfish eval depth-1
+        info = engine.analyse(board, chess.engine.Limit(depth=12))
+        sf_score = info["score"].white().score(mate_score=32000)
+
+        # difference
+        diff = abs(my_eval - sf_score)
+        differences.append(diff)
+
+        print(f"{name}:")
+        print(f"  FEN:     {fen}")
+        print(f"  Yours:   {my_eval}")
+        print(f"  SF:      {sf_score}")
+        print(f"  Diff:    {diff}")
+        print()
+
+        engine.ping()  # prevents engine from dying
+
+    engine.quit()
+
+    avg = sum(differences) / len(differences)
+    print(f"\nAVERAGE DIFFERENCE: {avg}")

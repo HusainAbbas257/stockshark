@@ -4,7 +4,7 @@ from evaluation import ordered_moves
 import random
 import json
 from collections import defaultdict
-import os
+# import os
 
 # FIXED: Use relative path instead of hardcoded absolute 
 # FIX 2: softcoded code is not working properly so for now we currently use hardcoded
@@ -205,7 +205,7 @@ class Engine:
         # Checkmate: Game over, return depth-adjusted score
         # - Faster checkmates are valued higher (for winning) or lower (for losing)
         # - Adding depth for loser, subtracting for winner ensures proper ordering
-        MATE_SCORE = 100000
+        MATE_SCORE =  32000 
         if board.is_checkmate():
             # side to move is checkmated = bad for them
             return -MATE_SCORE + depth if board.turn == chess.WHITE else MATE_SCORE - depth
@@ -440,7 +440,8 @@ class Engine:
         moves_list = self.opening.get(fen)
         if moves_list is not None:
             print('picking from from opening book...')
-            uci = random.choice(moves_list)   # pick random from list
+            
+            uci = random.choice(moves_list)# pick random from list
             move = chess.Move.from_uci(uci)  # convert to move object
             return (move, 0)
         
@@ -755,11 +756,11 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    # e.self_play(4, 50)
+    # e.self_play(4, 150)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
     # e.compare(depth1=1,depth2=3,max_moves=25)
-    e.play_against_human(chess.BLACK,4)
+    e.play_against_human(chess.WHITE,4)
     
     '''legendry game against @chess.com zamanatop:
     [Event "?"]
