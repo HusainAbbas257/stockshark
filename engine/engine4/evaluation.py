@@ -11,35 +11,45 @@ PIECE_VALUES = {
     chess.QUEEN: 929,     
     chess.KING: 60000      
 }
-opening_values = {
-    "KING_SAFETY_WEIGHT": 8.4375,
-    "MOBILITY_WEIGHT": 0.84375,
-    "MATE_VALUE": 12000.0,
-    "BISHOP_PAIR_BASE": 5.625,
-    "POSITIONAL_WEIGHT": 0.017578125,
-    "KING_TROP_WEIGHT": 0.140625,
-    "DEFENCE_FACTOR": 0.140625,
-    "ATTACK_FACTOR": 0.133125,
+opening_values= {
+    "KING_SAFETY_WEIGHT": 4.21875,
+    "MOBILITY_WEIGHT": 0.421875,
+    "MATE_VALUE": 6000.0,
+    "BISHOP_PAIR_BASE": 2.8125,
+    "POSITIONAL_WEIGHT": 0.0087890625,
+    "KING_TROP_WEIGHT": 0.0703125,
+    "DEFENCE_FACTOR": 0.0703125,
+    "ATTACK_FACTOR": 0.0665625,
+    "PAWN_CHAIN": 6.0,
+    "PASSED_PAWN": 20.0,
+    "PAWN_FACTOR": 0.5,
 }
 middlegame_values = {
-    "KING_SAFETY_WEIGHT": 7.5,
-    "MOBILITY_WEIGHT": 4.5,
-    "MATE_VALUE": 12000,
-    "BISHOP_PAIR_BASE": 18.75,
-    "POSITIONAL_WEIGHT": 0.05625,
-    "KING_TROP_WEIGHT": 0.75,
-    "DEFENCE_FACTOR": 0.375,
-    "ATTACK_FACTOR": 0.75
+    "KING_SAFETY_WEIGHT": 3.75,
+    "MOBILITY_WEIGHT": 2.25,
+    "MATE_VALUE": 6000.0,
+    "BISHOP_PAIR_BASE": 9.375,
+    "POSITIONAL_WEIGHT": 0.028125,
+    "KING_TROP_WEIGHT": 0.375,
+    "DEFENCE_FACTOR": 0.1875,
+    "ATTACK_FACTOR": 0.375,
+    "PAWN_CHAIN": 6.0,
+    "PASSED_PAWN": 20.0,
+    "PAWN_FACTOR": 0.5,
 }
+
 endgame_values = {
-    "KING_SAFETY_WEIGHT": 1.0,
-    "MOBILITY_WEIGHT": 7.5,
-    "MATE_VALUE": 16000,
-    "BISHOP_PAIR_BASE": 10.0,
-    "POSITIONAL_WEIGHT": 0.05,
-    "KING_TROP_WEIGHT": 0.25,
-    "DEFENCE_FACTOR": 0.5,
-    "ATTACK_FACTOR": 0.5
+    "KING_SAFETY_WEIGHT": 0.5,
+    "MOBILITY_WEIGHT": 3.75,
+    "MATE_VALUE": 8000.0,
+    "BISHOP_PAIR_BASE": 5.0,
+    "POSITIONAL_WEIGHT": 0.025,
+    "KING_TROP_WEIGHT": 0.125,
+    "DEFENCE_FACTOR": 0.25,
+    "ATTACK_FACTOR": 0.25,
+    "PAWN_CHAIN": 6.0,
+    "PASSED_PAWN": 20.0,
+    "PAWN_FACTOR": 0.5
 }
 
 
@@ -105,6 +115,68 @@ def get_current_material(board):
 
     return total
 
+def pawn_factor(board: chess.Board, values: dict[str, int]) -> float:
+    """
+    Evaluate pawn structure:
+    - pawn chains
+    - passed pawns
+    """
+    score = 0.0
+
+    pawn_chain_bonus = values.get("PAWN_CHAIN", 10)
+    passed_pawn_bonus = values.get("PASSED_PAWN", 30)
+
+    # loop over all pawns
+    for square in board.pieces(chess.PAWN, chess.WHITE):
+        score += evaluate_pawn(board, square, chess.WHITE,
+                               pawn_chain_bonus, passed_pawn_bonus)
+
+    for square in board.pieces(chess.PAWN, chess.BLACK):
+        score -= evaluate_pawn(board, square, chess.BLACK,
+                               pawn_chain_bonus, passed_pawn_bonus)
+
+    return score
+
+
+def evaluate_pawn(board, sq, color, chain_bonus, passed_bonus):
+    file = chess.square_file(sq)
+    rank = chess.square_rank(sq)
+
+    bonus = 0
+
+    # --- Pawn Chain ---
+    # friendly pawn on left or right diagonal behind?
+    for df in (-1, 1):
+        nf = file + df
+        nr = rank - 1 if color == chess.WHITE else rank + 1
+        if 0 <= nf <= 7 and 0 <= nr <= 7:
+            if board.piece_at(chess.square(nf, nr)) == chess.Piece(chess.PAWN, color):
+                bonus += chain_bonus
+
+    # --- Passed Pawn ---
+    # no enemy pawns ahead on same file or adjacent?
+    passed = True
+    direction = 1 if color == chess.WHITE else -1
+
+    for df in (-1, 0, 1):
+        nf = file + df
+        if nf < 0 or nf > 7:
+            continue
+
+        # check all ranks ahead
+        current_rank = rank + direction
+        while 0 <= current_rank <= 7:
+            sq_check = chess.square(nf, current_rank)
+            piece = board.piece_at(sq_check)
+            if piece and piece.piece_type == chess.PAWN and piece.color != color:
+                passed = False
+                break
+            current_rank += direction
+
+    if passed:
+        bonus += passed_bonus
+
+    return bonus
 def get_neighbour(board: chess.Board, piece: chess.Piece) -> list:
     # find piece square
     square = None
@@ -221,6 +293,7 @@ def evaluate(board: 'chess.Board') -> float:
     mobility_score = 0      # Advantage from having more moves available
     bishop_pair = 0
     king_tropism=0
+    pawn_eval=0
     # =============================================================================
     # MATERIAL & POSITIONAL EVALUATION
     # =============================================================================
@@ -297,6 +370,8 @@ def evaluate(board: 'chess.Board') -> float:
     # KING TROPISM  EVALUATION
     # =============================================================================
     king_tropism+=king_trop(board,weights)*weights['KING_TROP_WEIGHT']
+    
+    pawn_eval=pawn_factor(board,weights)*weights['PAWN_FACTOR']
     # =============================================================================
     # COMBINE ALL FACTORS
     # =============================================================================
@@ -308,7 +383,8 @@ def evaluate(board: 'chess.Board') -> float:
         positional_score +    # Piece placement quality
         king_safety_score +   # King safety considerations
         mobility_score+        # Tactical flexibility
-        bishop_pair             #bishop pair advantage
+        bishop_pair+             #bishop pair advantage
+        pawn_eval
     )
     
     return total_evaluation
@@ -483,63 +559,63 @@ def auto_tune(phase: str, param: str, tests: dict, weight_range=None):
 if __name__ == "__main__":
     tests = {
     # --- Opening Positions ---
-#   "Start Position": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  "Start Position": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
 
-#     "Ruy Lopez": "rnbqkbnr/pppp1ppp/8/4p3/3P4/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3",
-#     "Italian Game": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 2",
-#     "Scotch Game": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-#     "Sicilian Defense": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2",
-#     "French Defense": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
-#     "Caro-Kann Defense": "rnbqkbnr/pp1ppppp/2p5/8/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-#     "Pirc Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
-#     "King's Indian Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/5N2/PPP1PPPP/RNBQKB1R b KQkq - 1 2",
-#     "English Opening": "rnbqkbnr/pppppppp/8/8/4P3/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+    "Ruy Lopez": "rnbqkbnr/pppp1ppp/8/4p3/3P4/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3",
+    "Italian Game": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 2 2",
+    "Scotch Game": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+    "Sicilian Defense": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2",
+    "French Defense": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+    "Caro-Kann Defense": "rnbqkbnr/pp1ppppp/2p5/8/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+    "Pirc Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+    "King's Indian Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/5N2/PPP1PPPP/RNBQKB1R b KQkq - 1 2",
+    "English Opening": "rnbqkbnr/pppppppp/8/8/4P3/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
 
-#     "Vienna Game": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
-#     "Four Knights Game": "r1bqkbnr/pppp1ppp/2n5/4p3/3NP3/2N5/PPP2PPP/R1BQKB1R b KQkq - 2 3",
-#     "Petrov Defense": "rnbqkb1r/pppp1ppp/5n2/4p3/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
-#     "Philidor Defense": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-#     "Alekhine Defense": "rnbqkbnr/pppppppp/8/8/4P3/5n2/PPPP1PPP/RNBQKBNR w KQkq - 2 2",
-#     "Modern Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+    "Vienna Game": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+    "Four Knights Game": "r1bqkbnr/pppp1ppp/2n5/4p3/3NP3/2N5/PPP2PPP/R1BQKB1R b KQkq - 2 3",
+    "Petrov Defense": "rnbqkb1r/pppp1ppp/5n2/4p3/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
+    "Philidor Defense": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+    "Alekhine Defense": "rnbqkbnr/pppppppp/8/8/4P3/5n2/PPPP1PPP/RNBQKBNR w KQkq - 2 2",
+    "Modern Defense": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
 
-#     "Queen's Gambit": "rnbqkbnr/ppp1pppp/8/3p4/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-#     "Slav Defense": "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
-#     "Semi-Slav Defense": "rnbqkb1r/ppp1pppp/4pn2/3p4/3P4/5N2/PPP1PPPP/RNBQKB1R w KQkq - 2 3",
-#     "King's Gambit": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-#     "Queen's Indian Defense": "rnbqkb1r/pppp1ppp/5n2/4p3/2BP4/8/PPP1PPPP/RNBQK1NR b KQkq - 2 3",
-#     "Nimzo-Indian": "rnbqkb1r/pppp1ppp/4pn2/8/2BP4/5N2/PPP1PPPP/RNBQK2R b KQkq - 2 3",
-#     "Bogo-Indian": "rnbqkb1r/pppp1ppp/5n2/8/3P4/4PN2/PPP2PPP/R1BQKB1R b KQkq - 1 3",
-#     "Benoni Defense": "rnbqkbnr/ppp1pppp/8/3p4/2P5/8/PP1PPPPP/RNBQKBNR b KQkq - 0 2",
-#     "Benko Gambit": "rnbqkbnr/ppp1pppp/8/q2p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3",
+    "Queen's Gambit": "rnbqkbnr/ppp1pppp/8/3p4/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+    "Slav Defense": "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+    "Semi-Slav Defense": "rnbqkb1r/ppp1pppp/4pn2/3p4/3P4/5N2/PPP1PPPP/RNBQKB1R w KQkq - 2 3",
+    "King's Gambit": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+    "Queen's Indian Defense": "rnbqkb1r/pppp1ppp/5n2/4p3/2BP4/8/PPP1PPPP/RNBQK1NR b KQkq - 2 3",
+    "Nimzo-Indian": "rnbqkb1r/pppp1ppp/4pn2/8/2BP4/5N2/PPP1PPPP/RNBQK2R b KQkq - 2 3",
+    "Bogo-Indian": "rnbqkb1r/pppp1ppp/5n2/8/3P4/4PN2/PPP2PPP/R1BQKB1R b KQkq - 1 3",
+    "Benoni Defense": "rnbqkbnr/ppp1pppp/8/3p4/2P5/8/PP1PPPPP/RNBQKBNR b KQkq - 0 2",
+    "Benko Gambit": "rnbqkbnr/ppp1pppp/8/q2p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3",
 
-#     "Dutch Defense": "rnbqkbnr/pppppppp/8/8/3P1p2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
-#     "Grunfeld Defense": "rnbqkb1r/ppp1pppp/5n2/3p4/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 2 3",
-#     "Catalan Opening": "rnbqkb1r/ppp2ppp/4pn2/3p4/2BPP3/5N2/PPP2PPP/RNBQK2R b KQkq - 1 3",
-#     "Trompowsky Attack": "rnbqkbnr/pppppppp/8/8/3P3B/8/PPP1PPPP/RNBQK1NR b KQkq - 1 1",
-#     "London System": "rnbqkbnr/pp1ppppp/2p5/8/3P1B2/5N2/PPP1PPPP/RN1QKB1R b KQkq - 2 2",
-#     "Colle System": "rnbqkbnr/pppppppp/8/8/3P4/3P1N2/PPP2PPP/RNBQKB1R b KQkq - 1 2",
-#     "Tarrasch Defense": "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq - 0 2",
-#     "Budapest Gambit": "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 1 2",
+    "Dutch Defense": "rnbqkbnr/pppppppp/8/8/3P1p2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+    "Grunfeld Defense": "rnbqkb1r/ppp1pppp/5n2/3p4/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 2 3",
+    "Catalan Opening": "rnbqkb1r/ppp2ppp/4pn2/3p4/2BPP3/5N2/PPP2PPP/RNBQK2R b KQkq - 1 3",
+    "Trompowsky Attack": "rnbqkbnr/pppppppp/8/8/3P3B/8/PPP1PPPP/RNBQK1NR b KQkq - 1 1",
+    "London System": "rnbqkbnr/pp1ppppp/2p5/8/3P1B2/5N2/PPP1PPPP/RN1QKB1R b KQkq - 2 2",
+    "Colle System": "rnbqkbnr/pppppppp/8/8/3P4/3P1N2/PPP2PPP/RNBQKB1R b KQkq - 1 2",
+    "Tarrasch Defense": "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq - 0 2",
+    "Budapest Gambit": "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 1 2",
 
-#     "Scandinavian Defense": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 0 2",
-#     "Owen Defense": "rnbqkbnr/pppppppp/8/8/3p1b2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
-#     "Horwitz Defense": "rnbqkbnr/pppp1ppp/8/4p3/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 2",
+    "Scandinavian Defense": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 0 2",
+    "Owen Defense": "rnbqkbnr/pppppppp/8/8/3p1b2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+    "Horwitz Defense": "rnbqkbnr/pppp1ppp/8/4p3/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 2",
 
-#     "Reti Opening": "rnbqkbnr/pppppppp/8/8/3P4/5N2/PPP1PPPP/RNBQKB1R b KQkq - 1 1",
-#     "King's Fianchetto": "rnbqkbnr/pppppppp/8/8/4P3/6NP/PPPP1PP1/RNBQKB1R b KQkq - 0 2",
-#     "Bird Opening": "rnbqkbnr/pppppppp/8/8/3P1p2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
-#     "Larsen Opening": "rnbqkbnr/pppppppp/8/8/2B5/8/PPPPPPPP/RNBQK1NR b KQkq - 1 1",
+    "Reti Opening": "rnbqkbnr/pppppppp/8/8/3P4/5N2/PPP1PPPP/RNBQKB1R b KQkq - 1 1",
+    "King's Fianchetto": "rnbqkbnr/pppppppp/8/8/4P3/6NP/PPPP1PP1/RNBQKB1R b KQkq - 0 2",
+    "Bird Opening": "rnbqkbnr/pppppppp/8/8/3P1p2/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+    "Larsen Opening": "rnbqkbnr/pppppppp/8/8/2B5/8/PPPPPPPP/RNBQK1NR b KQkq - 1 1",
 
-#     "Evans Gambit": "rnbqkbnr/pppp1ppp/8/4p3/2BPP3/8/PPP2PPP/RNBQK1NR b KQkq - 0 3",
-#     "Fried Liver Attack": "r1bqkb1r/pppp1ppp/2n2n2/1B2p3/3NP3/8/PPP2PPP/R1BQK2R b KQkq - 6 5",
-#     "Max Lange Attack": "r1bqkb1r/pppp1ppp/2n5/1B2p3/3NP3/8/PPP2PPP/R1BQK2R b KQkq - 4 5",
-#     "Two Knights Defense": "r1bqkb1r/pppp1ppp/2n5/4p3/3NP3/8/PPP2PPP/RNBQKB1R b KQkq - 2 3",
-#     "Giuoco Pianissimo": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 2",
+    "Evans Gambit": "rnbqkbnr/pppp1ppp/8/4p3/2BPP3/8/PPP2PPP/RNBQK1NR b KQkq - 0 3",
+    "Fried Liver Attack": "r1bqkb1r/pppp1ppp/2n2n2/1B2p3/3NP3/8/PPP2PPP/R1BQK2R b KQkq - 6 5",
+    "Max Lange Attack": "r1bqkb1r/pppp1ppp/2n5/1B2p3/3NP3/8/PPP2PPP/R1BQK2R b KQkq - 4 5",
+    "Two Knights Defense": "r1bqkb1r/pppp1ppp/2n5/4p3/3NP3/8/PPP2PPP/RNBQKB1R b KQkq - 2 3",
+    "Giuoco Pianissimo": "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 2",
 
-#     "Scotch Gambit": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 1 2",
-#     "Danish Gambit": "rnbqkbnr/ppp2ppp/3p4/4p3/2PP4/8/PP3PPP/RNBQKBNR b KQkq - 0 3",
-#     "Smith-Morra Gambit": "rnbqkbnr/pp1ppppp/8/2p5/4P3/2P5/PP1P1PPP/RNBQKBNR b KQkq - 0 2",
-#     "Wing Gambit (Sicilian)": "rnbqkbnr/pp1ppppp/8/2p5/2P1P3/8/PP1P1PPP/RNBQKBNR b KQkq - 0 2",
+    "Scotch Gambit": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 1 2",
+    "Danish Gambit": "rnbqkbnr/ppp2ppp/3p4/4p3/2PP4/8/PP3PPP/RNBQKBNR b KQkq - 0 3",
+    "Smith-Morra Gambit": "rnbqkbnr/pp1ppppp/8/2p5/4P3/2P5/PP1P1PPP/RNBQKBNR b KQkq - 0 2",
+    "Wing Gambit (Sicilian)": "rnbqkbnr/pp1ppppp/8/2p5/2P1P3/8/PP1P1PPP/RNBQKBNR b KQkq - 0 2",
 
     # --- Midgame Situations ---
     # "White +Pawn": "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
@@ -570,36 +646,36 @@ if __name__ == "__main__":
     # "Discovered Check": "r1bqk1nr/pppp1ppp/2n5/4p3/2B1P3/2N2Q2/PPPP1PPP/R1B1K2R b KQkq - 3 4",
     # "Skewer + Pin": "r3k2r/pppqppbp/2np1np1/8/2BPP3/2N2Q2/PPP2PPP/R1B2RK1 w kq - 0 7",
     
-    # --- Endgame Patterns ---
-    "King Opposition": "8/8/8/3k4/3K4/8/8/8 w - - 0 1",
-    "Lucena Position": "8/8/8/8/8/2K5/5P2/6k1 w - - 0 1",
-    "Philidor Position": "8/8/8/8/1k6/8/2K5/8 w - - 0 1",
-    "Rook Behind Passed Pawn": "8/8/8/8/4P3/8/3K4/5k2 w - - 0 1",
-    "Opposite Colored Bishops": "8/8/8/8/3b4/4B3/3K4/5k2 w - - 0 1",
-    "King and Pawn": "8/8/3k4/8/3P4/8/8/3K4 w - - 0 1",
-    "Rook Endgame": "8/8/3k4/8/3R4/8/8/3K4 w - - 0 1",
-    "Knight Endgame": "8/8/3k4/8/3N4/8/8/3K4 w - - 0 1",
-    "Bishop Endgame": "8/8/3k4/8/3B4/8/8/3K4 w - - 0 1",
-    "Opposite Bishops": "8/8/3k4/8/3B4/8/8/3K2b1 w - - 0 1",
-    "Rook vs Bishop": "8/8/3k4/8/3R4/8/8/3K2b1 w - - 0 1",
-    "Knight vs Bishop": "8/8/3k4/8/3N4/8/8/3K2b1 w - - 0 1",
-    "Pawn Race": "8/3k4/8/3P4/8/8/4p3/3K4 w - - 0 1",
-    "Two Queens": "8/8/8/3k4/3Q4/8/3Q4/3K4 w - - 0 1",
-    "Underpromotion": "8/3k4/8/8/3P4/8/8/3K4 w - - 0 1",
+#     # --- Endgame Patterns ---
+#     "King Opposition": "8/8/8/3k4/3K4/8/8/8 w - - 0 1",
+#     "Lucena Position": "8/8/8/8/8/2K5/5P2/6k1 w - - 0 1",
+#     "Philidor Position": "8/8/8/8/1k6/8/2K5/8 w - - 0 1",
+#     "Rook Behind Passed Pawn": "8/8/8/8/4P3/8/3K4/5k2 w - - 0 1",
+#     "Opposite Colored Bishops": "8/8/8/8/3b4/4B3/3K4/5k2 w - - 0 1",
+#     "King and Pawn": "8/8/3k4/8/3P4/8/8/3K4 w - - 0 1",
+#     "Rook Endgame": "8/8/3k4/8/3R4/8/8/3K4 w - - 0 1",
+#     "Knight Endgame": "8/8/3k4/8/3N4/8/8/3K4 w - - 0 1",
+#     "Bishop Endgame": "8/8/3k4/8/3B4/8/8/3K4 w - - 0 1",
+#     "Opposite Bishops": "8/8/3k4/8/3B4/8/8/3K2b1 w - - 0 1",
+#     "Rook vs Bishop": "8/8/3k4/8/3R4/8/8/3K2b1 w - - 0 1",
+#     "Knight vs Bishop": "8/8/3k4/8/3N4/8/8/3K2b1 w - - 0 1",
+#     "Pawn Race": "8/3k4/8/3P4/8/8/4p3/3K4 w - - 0 1",
+#     "Two Queens": "8/8/8/3k4/3Q4/8/3Q4/3K4 w - - 0 1",
+#     "Underpromotion": "8/3k4/8/8/3P4/8/8/3K4 w - - 0 1",
 
-    # --- Imbalanced Positions ---
-    "Queen Sacrifice": "rnb1kbnr/ppppqppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 3",
-    "Material Imbalance": "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPP2PPP/RNBQKBNR w KQkq - 0 2",
-    "Two Bishops Advantage": "rnbqkbnr/pppppppp/8/8/8/8/PPP2PPP/RNBQKBBR w KQkq - 0 1",
-    "Rook Lift": "rnbqkbnr/pppppppp/8/8/3R4/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
-    "Center Break": "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP2PPP/RNBQKBNR w KQkq - 0 3",
-    "Advanced Pawn Chain": "rnbqkbnr/pppppppp/8/8/3PPP2/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
-    "King Walk": "8/8/3k4/8/4K3/8/8/8 w - - 0 1",
-    "Knight Outpost": "rnbqkbnr/pppppppp/8/8/3N4/8/PPP2PPP/R1BQKBNR b KQkq - 0 3",
-    "Pawn Storm": "rnbq1rk1/ppppppbp/6p1/8/3PP3/2N2N2/PPP2PPP/R1BQ1RK1 w - - 0 6",
+#     # --- Imbalanced Positions ---
+#     "Queen Sacrifice": "rnb1kbnr/ppppqppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 3",
+#     "Material Imbalance": "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPP2PPP/RNBQKBNR w KQkq - 0 2",
+#     "Two Bishops Advantage": "rnbqkbnr/pppppppp/8/8/8/8/PPP2PPP/RNBQKBBR w KQkq - 0 1",
+#     "Rook Lift": "rnbqkbnr/pppppppp/8/8/3R4/8/PPP2PPP/RNBQKBNR b KQkq - 0 2",
+#     "Center Break": "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP2PPP/RNBQKBNR w KQkq - 0 3",
+#     "Advanced Pawn Chain": "rnbqkbnr/pppppppp/8/8/3PPP2/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
+#     "King Walk": "8/8/3k4/8/4K3/8/8/8 w - - 0 1",
+#     "Knight Outpost": "rnbqkbnr/pppppppp/8/8/3N4/8/PPP2PPP/R1BQKBNR b KQkq - 0 3",
+#     "Pawn Storm": "rnbq1rk1/ppppppbp/6p1/8/3PP3/2N2N2/PPP2PPP/R1BQ1RK1 w - - 0 6",
 }
     
-    for factor in endgame_values:
-        
-        print(auto_tune("endgame", factor, tests))
+    for factor in middlegame_values:
+
+        print(auto_tune("middlegame", factor, tests))
 
