@@ -61,39 +61,44 @@ class Engine:
             ZOBRIST_ENPASSANT[file] = random.getrandbits(64)
         
         # Generate side to move zobrist key
-        ZOBRIST_SIDE = random.getrandbits(64)
+        ZOBRIST_SIDE = random.getrandbits(64) 
     def compute_hash(self, board):
-        h = 0
+        """Compute Zobrist hash - safe for en-passant and uses globals."""
+        global ZOBRIST_PIECES, ZOBRIST_CASTLING, ZOBRIST_ENPASSANT, ZOBRIST_SIDE
 
-        for square in range(64):
+        h = 0
+        # piece-square
+        for square in chess.SQUARES:
             piece = board.piece_at(square)
             if piece:
-                h ^= ZOBRIST_PIECES[(piece.piece_type, piece.color, square)]
+                key = (piece.piece_type, piece.color, square)
+                # safe fallback if table missing (shouldn't happen)
+                if key in ZOBRIST_PIECES:
+                    h ^= ZOBRIST_PIECES[key]
 
+        # side to move
         if board.turn == chess.BLACK:
             h ^= ZOBRIST_SIDE
 
+        # castling rights (use boolean checks)
         if board.has_kingside_castling_rights(chess.WHITE):
-            h ^= ZOBRIST_CASTLING["K"]
+            h ^= ZOBRIST_CASTLING.get("K", 0)
         if board.has_queenside_castling_rights(chess.WHITE):
-            h ^= ZOBRIST_CASTLING["Q"]
+            h ^= ZOBRIST_CASTLING.get("Q", 0)
         if board.has_kingside_castling_rights(chess.BLACK):
-            h ^= ZOBRIST_CASTLING["k"]
+            h ^= ZOBRIST_CASTLING.get("k", 0)
         if board.has_queenside_castling_rights(chess.BLACK):
-            h ^= ZOBRIST_CASTLING["q"]
+            h ^= ZOBRIST_CASTLING.get("q", 0)
 
-        # EP only if capture possible
+        # en-passant: XOR file key if ep_square exists (standard practice).
         ep = board.ep_square
-        if ep:
-            file = chess.square_file(ep)
-            if board.turn == chess.WHITE:
-                if board.piece_at(ep - 9) or board.piece_at(ep - 7):
-                    h ^= ZOBRIST_ENPASSANT[file]
-            else:
-                if board.piece_at(ep + 9) or board.piece_at(ep + 7):
-                    h ^= ZOBRIST_ENPASSANT[file]
+        if ep is not None:
+            file_idx = chess.square_file(ep)
+            # only XOR if file key exists
+            h ^= ZOBRIST_ENPASSANT.get(file_idx, 0)
 
         return h
+
 
     # --- Transposition table helpers ---#
     def tt_lookup(self, key: int, depth: int, alpha: float, beta: float):
@@ -498,8 +503,8 @@ class Engine:
             return (move, 0)
         
         
-        # resett killers and history:
-        self.killer_moves = defaultdict(lambda:[None,None])
+        # resett killers and history:   
+        self.killer_moves = defaultdict(list)
         self.history = [[0]*64 for _ in range(64)]
 
         # =============================================================================

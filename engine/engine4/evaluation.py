@@ -104,27 +104,24 @@ piece_square_table= {
             -4,   3, -14, -50, -57, -30,  13,   4,
             17,  30,  45, -30,   6,  -30,  40,  18),
 }
+# evaluation.py
 def calculate_mobility(board: chess.Board) -> float:
     """
-    Calculate mobility advantage for the side to move.
-    Mobility = number of legal moves available.
+    Calculate mobility difference (white_moves - black_moves) without mutating the input board.
+    Uses a cheap copy to flip turn and count legal moves.
     """
-    # Store original turn
-    original_turn = board.turn
-    
-    # Count white's mobility
-    board.turn = chess.WHITE
-    white_mobility = len(list(board.legal_moves))
-    
-    # Count black's mobility
-    board.turn = chess.BLACK
-    black_mobility = len(list(board.legal_moves))
-    
-    # Restore original turn
-    board.turn = original_turn
-    
-    # Return difference (positive = white advantage)
+    # Count mobility for current side quickly
+    # Use shallow copies so original board is not mutated
+    white_board = board.copy()
+    white_board.turn = chess.WHITE
+    white_mobility = sum(1 for _ in white_board.legal_moves)
+
+    black_board = board.copy()
+    black_board.turn = chess.BLACK
+    black_mobility = sum(1 for _ in black_board.legal_moves)
+
     return white_mobility - black_mobility
+
 def get_current_material(board):
     total = 0
     for piece_type, value in PIECE_VALUES.items():
@@ -397,79 +394,72 @@ def evaluate(board: 'chess.Board') -> float:
     )
     
     return total_evaluation
-def ordered_moves(board: 'chess.Board', killer_moves={}, depth=0,history = [[0]*64 for _ in range(64)]
-) -> list:
-        """
-        Orders legal moves using heuristic scoring to optimize alpha-beta pruning.
-        Includes killer move heuristic.
-        """
+# evaluation.py
+def ordered_moves(board: 'chess.Board', killer_moves=None, depth=0, history=None) -> list:
+    """
+    Orders legal moves using heuristic scoring to optimize alpha-beta pruning.
+    Includes killer move heuristic.
+    """
+    # Defensive defaults (avoid mutable default args)
+    if killer_moves is None:
+        killer_moves = {}
+    if history is None:
+        history = [[0] * 64 for _ in range(64)]
 
+    # scoring constants
+    PROMOTION_BONUS = 10_000
+    KILLER_BONUS     = 9_000      # below promotion, above captures
+    CAPTURE_BASE     = 1_000
+    CASTLING_BONUS   = 500
+    CENTER_BONUS     = 100
 
-        # scoring constants
-        PROMOTION_BONUS = 10_000
-        KILLER_BONUS     = 9_000      # below promotion, above captures
-        CAPTURE_BASE     = 1_000
-        CASTLING_BONUS   = 500
-        CENTER_BONUS     = 100
+    CENTER_SQUARES = {chess.D4, chess.D5, chess.E4, chess.E5}
 
-        CENTER_SQUARES = {chess.D4, chess.D5, chess.E4, chess.E5}
+    move_scores = []
 
-        move_scores = []
+    # retrieve killer moves for this depth (ensure list-like)
+    killers = killer_moves.get(depth, [])
+    if killers is None:
+        killers = []
 
-        # retrieve killer moves for this depth
-        killers = killer_moves.get(depth, [])
+    for move in board.legal_moves:
+        score = 0
+        target_piece = board.piece_at(move.to_square)
 
-        for move in board.legal_moves:
-            score = 0
-            target_piece = board.piece_at(move.to_square)
+        # PRIORITY 0 — KILLER MOVES (quiet only)
+        if move in killers:
+            if not target_piece and not move.promotion and not board.is_castling(move):
+                score += KILLER_BONUS
 
-            # -----------------------------------------------------------
-            # PRIORITY 0 — KILLER MOVES (quiet only)
-            # -----------------------------------------------------------
-            if move in killers:
-                # only quiet moves should get killer bonus
-                if not target_piece and not move.promotion and not board.is_castling(move):
-                    score += KILLER_BONUS
+        # PRIORITY 1 — PROMOTIONS
+        if move.promotion:
+            score += PROMOTION_BONUS
 
-            # -----------------------------------------------------------
-            # PRIORITY 1 — PROMOTIONS
-            # -----------------------------------------------------------
-            if move.promotion:
-                score += PROMOTION_BONUS
+        # PRIORITY 2 — CAPTURES (MVV-LVA)
+        elif target_piece:
+            attacker_piece = board.piece_at(move.from_square)
+            victim = PIECE_VALUES.get(target_piece.piece_type, 0)
+            attacker = PIECE_VALUES.get(attacker_piece.piece_type, 1) if attacker_piece else 1
+            # MVV-LVA style: prefer capturing high value victims with low-value attackers
+            score += CAPTURE_BASE * victim - attacker
 
-            # -----------------------------------------------------------
-            # PRIORITY 2 — CAPTURES (MVV-LVA)
-            # -----------------------------------------------------------
-            elif target_piece:
-                attacker_piece = board.piece_at(move.from_square)
-                victim = PIECE_VALUES.get(target_piece.piece_type, 0)
-                attacker = PIECE_VALUES.get(attacker_piece.piece_type, 1) if attacker_piece else 1
-                score += CAPTURE_BASE * victim - attacker
+        # PRIORITY 3 — CASTLING
+        elif board.is_castling(move):
+            score += CASTLING_BONUS
 
-            # -----------------------------------------------------------
-            # PRIORITY 3 — CASTLING
-            # -----------------------------------------------------------
-            elif board.is_castling(move):
-                score += CASTLING_BONUS
+        # PRIORITY 4 — CENTER CONTROL
+        elif move.to_square in CENTER_SQUARES:
+            score += CENTER_BONUS
 
-            # -----------------------------------------------------------
-            # PRIORITY 4 — CENTER CONTROL
-            # -----------------------------------------------------------
-            elif move.to_square in CENTER_SQUARES:
-                score += CENTER_BONUS
+        # Priority 5 - history heuristic
+        else:
+            score += history[move.from_square][move.to_square]
 
-            
-            # ========================================================
-            # Priority 5 - other moves will use history heurestic
-            # ========================================================
-            else:
-                score+=history[move.from_square][move.to_square]
-            
-            move_scores.append((score, move))
+        move_scores.append((score, move))
 
-        # sort best first
-        move_scores.sort(reverse=True, key=lambda x: x[0])
-        return [m for s, m in move_scores]
+    # sort best first
+    move_scores.sort(reverse=True, key=lambda x: x[0])
+    return [m for s, m in move_scores]
 
 
 
