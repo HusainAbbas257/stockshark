@@ -1,3 +1,4 @@
+# evaluation.py
 import chess
 import math
 import chess.engine
@@ -320,27 +321,34 @@ def evaluate(board: 'chess.Board') -> float:
     if board.is_checkmate():
         return -weights['MATE_VALUE'] if board.turn else weights['MATE_VALUE']
 
-    # Iterate through each piece type (pawn, knight, bishop, rook, queen, king)
-    for piece_type, value in PIECE_VALUES.items():
-        # Get all pieces of this type for both colors
-        white_pieces = board.pieces(piece_type, chess.WHITE)
-        black_pieces = board.pieces(piece_type, chess.BLACK)
-        
-        # Calculate material difference
-        # Positive if White has more/better pieces, negative if Black does
-        material_score += (len(white_pieces) - len(black_pieces)) * value
-        
-        # Evaluate White's piece placement using piece-square tables
-        # PST gives bonuses for pieces on good squares (e.g., knights in center)
-        # we want the positional advantage to be least considerable in endgame
-        for square in white_pieces:
-            positional_score += (piece_square_table[piece_type][square])*weights['POSITIONAL_WEIGHT']
-        
-        # Evaluate Black's piece placement
-        # Mirror the board (flip vertically) since PST is designed for White's perspective
-        for square in black_pieces:
-            mirrored_square = chess.square_mirror(square)
-            positional_score -=( piece_square_table[piece_type][mirrored_square])*weights['POSITIONAL_WEIGHT']
+    # Fast path: if engine set cached values on board, use them (avoids full scan)
+    # board._cached_material  -> White - Black material (centipawns)
+    # board._cached_pst       -> sum(piece_square_table values) (White - Black, raw)
+    if hasattr(board, "_cached_material") and hasattr(board, "_cached_pst"):
+        material_score = board._cached_material
+        positional_score = board._cached_pst * weights['POSITIONAL_WEIGHT']
+    else:
+        # Iterate through each piece type (pawn, knight, bishop, rook, queen, king)
+        for piece_type, value in PIECE_VALUES.items():
+            # Get all pieces of this type for both colors
+            white_pieces = board.pieces(piece_type, chess.WHITE)
+            black_pieces = board.pieces(piece_type, chess.BLACK)
+            
+            # Calculate material difference
+            # Positive if White has more/better pieces, negative if Black does
+            material_score += (len(white_pieces) - len(black_pieces)) * value
+            
+            # Evaluate White's piece placement using piece-square tables
+            # PST gives bonuses for pieces on good squares (e.g., knights in center)
+            # we want the positional advantage to be least considerable in endgame
+            for square in white_pieces:
+                positional_score += (piece_square_table[piece_type][square])*weights['POSITIONAL_WEIGHT']
+            
+            # Evaluate Black's piece placement
+            # Mirror the board (flip vertically) since PST is designed for White's perspective
+            for square in black_pieces:
+                mirrored_square = chess.square_mirror(square)
+                positional_score -=( piece_square_table[piece_type][mirrored_square])*weights['POSITIONAL_WEIGHT']
     
     # =============================================================================
     # KING SAFETY EVALUATION
@@ -598,7 +606,7 @@ if __name__ == "__main__":
     # "Skewer Threat": "r3k2r/pppqppbp/2np1np1/8/2BPP3/2N2N2/PPP2PPP/R1BQ1RK1 w kq - 0 7",
     # "Discovered Attack": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 2 4",
     # "Hanging Piece": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N2N2/PPPPBPPP/R1BQK2R w KQkq - 2 4",
-    # "Back Rank Weakness": "r3k2r/ppp2ppp/8/8/8/8/PPP2PPP/R3K2R w KQkq - 0 1",
+    # "Back Rank Weakness": "r3k2r/ppp2ppp/8/8/8/8/PPP2PPP/R3K2R w KQq - 0 1",
     # "Overextended Pawns": "rnbqkbnr/pppp1ppp/8/4p3/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 3",
     # "King Open File": "rnbqkbnr/pppp1ppp/8/4p3/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 2",
     # "Double Attack": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK2R w KQkq - 2 4",
@@ -637,4 +645,3 @@ if __name__ == "__main__":
     for factor in middlegame_values:
 
         print(auto_tune("middlegame", factor, tests))
-

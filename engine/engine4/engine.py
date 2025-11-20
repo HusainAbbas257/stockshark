@@ -1,6 +1,6 @@
 import chess
 from evaluation import evaluate as evaluate_board
-from evaluation import ordered_moves
+from evaluation import ordered_moves, PIECE_VALUES, piece_square_table
 import random
 import json
 from collections import defaultdict
@@ -24,6 +24,11 @@ class Engine:
         self.killer_moves = defaultdict(list)
         self.history = [[0] * 64 for _ in range(64)]
         self.history_max = 10000  # Cap for history values
+        
+        # incremental eval caches
+        self.material_score = 0   # White - Black material
+        self.pst_score = 0        # White - Black PST total
+        self._eval_stack = []     # stack of (delta_mat, delta_pst) for undoing
         
         try:
             with open(opening_file_path, "r") as f:
@@ -62,6 +67,7 @@ class Engine:
         
         # Generate side to move zobrist key
         ZOBRIST_SIDE = random.getrandbits(64) 
+
     def compute_hash(self, board):
         """Compute Zobrist hash - safe for en-passant and uses globals."""
         global ZOBRIST_PIECES, ZOBRIST_CASTLING, ZOBRIST_ENPASSANT, ZOBRIST_SIDE
@@ -142,6 +148,156 @@ class Engine:
 
         # Only search captures where you take equal or higher value
         return piece_to.piece_type >= piece_from.piece_type
+
+    # ------------------------------
+    # Incremental evaluation helpers
+    # ------------------------------
+    def init_eval_cache(self, board: 'chess.Board'):
+        """Compute initial material_score and pst_score from board."""
+        mat = 0
+        pst = 0
+        for sq in chess.SQUARES:
+            p = board.piece_at(sq)
+            if not p:
+                continue
+            val = PIECE_VALUES.get(p.piece_type, 0)
+            pst_val = piece_square_table.get(p.piece_type, (0,)*64)[sq]
+            if p.color == chess.WHITE:
+                mat += val
+                pst += pst_val
+            else:
+                mat -= val
+                pst -= pst_val
+        self.material_score = mat
+        self.pst_score = pst
+        self._eval_stack = []
+
+    def push_move_with_eval(self, board: 'chess.Board', move: 'chess.Move'):
+        """
+        Replace board.push(move) with this.
+        Compute deltas and push move while keeping eval caches consistent.
+        """
+        moving = board.piece_at(move.from_square)
+        # Normal captured piece at to_square (may be None)
+        captured = board.piece_at(move.to_square)
+        promo = move.promotion  # None or piece_type int
+
+        delta_mat = 0
+        delta_pst = 0
+
+        # Moving piece PST/material deltas
+        if moving:
+            from_pst = piece_square_table.get(moving.piece_type, (0,)*64)[move.from_square]
+            dest_piece_type = promo if promo else moving.piece_type
+            to_pst = piece_square_table.get(dest_piece_type, (0,)*64)[move.to_square]
+
+            if moving.color == chess.WHITE:
+                # remove from from_square
+                delta_pst -= from_pst
+                # add at to_square (promotion accounted)
+                delta_pst += to_pst
+                if promo:
+                    # white promoted -> gained material = promo_val - pawn_val (or old piece val)
+                    old_val = PIECE_VALUES.get(moving.piece_type, 0)
+                    new_val = PIECE_VALUES.get(promo, old_val)
+                    delta_mat += (new_val - old_val)
+                # otherwise material unchanged for white move (unless capture handled below)
+            else:
+                # black moves decrease white advantage when piece leaves from_square
+                delta_pst += from_pst
+                delta_pst -= to_pst
+                if promo:
+                    old_val = PIECE_VALUES.get(moving.piece_type, 0)
+                    new_val = PIECE_VALUES.get(promo, old_val)
+                    delta_mat -= (new_val - old_val)
+
+        # Handle capture (including en-passant)
+        if board.is_en_passant(move):
+            # captured pawn is not on to_square
+            ep_sq = move.to_square + (-8 if moving and moving.color == chess.WHITE else 8)
+            cap = board.piece_at(ep_sq)
+            if cap:
+                cap_val = PIECE_VALUES.get(cap.piece_type, 0)
+                cap_pst = piece_square_table.get(cap.piece_type, (0,)*64)[ep_sq]
+                if cap.color == chess.WHITE:
+                    delta_mat -= cap_val
+                    delta_pst -= cap_pst
+                else:
+                    delta_mat += cap_val
+                    delta_pst += cap_pst
+        else:
+            if captured:
+                cap_val = PIECE_VALUES.get(captured.piece_type, 0)
+                cap_pst = piece_square_table.get(captured.piece_type, (0,)*64)[move.to_square]
+                if captured.color == chess.WHITE:
+                    delta_mat -= cap_val
+                    delta_pst -= cap_pst
+                else:
+                    delta_mat += cap_val
+                    delta_pst += cap_pst
+
+        # Handle castling: rook also moves; include rook PST delta
+        if board.is_castling(move):
+            # Determine rook from/to squares depending on color & side
+            if moving and moving.color == chess.WHITE:
+                # white king: e1->g1 (kingside) rook h1->f1 ; e1->c1 (queenside) rook a1->d1
+                if move.to_square == chess.G1:
+                    rook_from, rook_to = chess.H1, chess.F1
+                elif move.to_square == chess.C1:
+                    rook_from, rook_to = chess.A1, chess.D1
+                else:
+                    rook_from, rook_to = None, None
+            elif moving and moving.color == chess.BLACK:
+                if move.to_square == chess.G8:
+                    rook_from, rook_to = chess.H8, chess.F8
+                elif move.to_square == chess.C8:
+                    rook_from, rook_to = chess.A8, chess.D8
+                else:
+                    rook_from, rook_to = None, None
+            else:
+                rook_from, rook_to = None, None
+
+            if rook_from is not None:
+                rook_piece = board.piece_at(rook_from)
+                if rook_piece:
+                    # rook PST change
+                    rf_pst = piece_square_table.get(rook_piece.piece_type, (0,)*64)[rook_from]
+                    rt_pst = piece_square_table.get(rook_piece.piece_type, (0,)*64)[rook_to]
+                    if rook_piece.color == chess.WHITE:
+                        delta_pst -= rf_pst
+                        delta_pst += rt_pst
+                    else:
+                        delta_pst += rf_pst
+                        delta_pst -= rt_pst
+
+        # Apply deltas to caches
+        self.material_score += delta_mat
+        self.pst_score += delta_pst
+
+        # push undo record
+        self._eval_stack.append((delta_mat, delta_pst))
+        # finally push the move
+        board.push(move)
+
+    def pop_move_with_eval(self, board: 'chess.Board'):
+        """
+        Replace board.pop() with this. Pops board and reverts incremental cache using stack.
+        """
+        # pop board first to restore position
+        board.pop()
+        if not self._eval_stack:
+            # safety fallback: recompute whole cache (slow)
+            self.init_eval_cache(board)
+            return
+        delta_mat, delta_pst = self._eval_stack.pop()
+        # revert deltas
+        self.material_score -= delta_mat
+        self.pst_score -= delta_pst
+
+    # ------------------------------
+    # End incremental helpers
+    # ------------------------------
+
     def quiescence(self, board, alpha, beta, is_maximizing, depth=0, max_q=4):
         """
         Quiescence search to avoid horizon effect by searching only tactical moves.
@@ -177,9 +333,10 @@ class Engine:
                 return beta
         
         for move in capture_moves:
-            board.push(move)
+            # use incremental push/pop
+            self.push_move_with_eval(board, move)
             score = self.quiescence(board, alpha, beta, not is_maximizing, depth + 1, max_q)
-            board.pop()
+            self.pop_move_with_eval(board)
             
             if is_maximizing:
                 if score >= beta:
@@ -300,7 +457,8 @@ class Engine:
                     gives_check = board.gives_check(move)
                     can_reduce = not gives_check
                 
-                board.push(move)
+                # use incremental push/pop
+                self.push_move_with_eval(board, move)
                 
                 if can_reduce:
                     # Reduced depth search
@@ -313,7 +471,7 @@ class Engine:
                     # Normal full-depth search
                     eval_score = self.minimax(board, depth - 1, False, alpha, beta, depth_count + 1)
                 
-                board.pop()
+                self.pop_move_with_eval(board)
 
 
                 if eval_score > max_eval:
@@ -376,7 +534,8 @@ class Engine:
                 gives_check = board.gives_check(move)
                 is_killer = move in self.killer_moves.get(depth, [])
 
-                board.push(move)
+                # use incremental push/pop
+                self.push_move_with_eval(board, move)
 
                 # --- LMR CONDITIONS ---
                 # For minimizing side: only reduce quiet/non-check/non-killer late moves
@@ -396,7 +555,7 @@ class Engine:
                     eval_score = self.minimax(board, depth-1, True, alpha, beta, depth_count+1)
 
 
-                board.pop()
+                self.pop_move_with_eval(board)
 
 
                 if eval_score < min_eval:
@@ -561,9 +720,9 @@ class Engine:
         
         for move in moves:
             # ---------------------------------------------------------------------
-            # Make the move temporarily
+            # Make the move temporarily (use incremental push)
             # ---------------------------------------------------------------------
-            board.push(move)
+            self.push_move_with_eval(board, move)
             
             # ---------------------------------------------------------------------
             # Recursively evaluate the resulting position
@@ -579,9 +738,9 @@ class Engine:
             )
             
             # ---------------------------------------------------------------------
-            # Restore board state
+            # Restore board state (use incremental pop)
             # ---------------------------------------------------------------------
-            board.pop()
+            self.pop_move_with_eval(board)
             
             # ---------------------------------------------------------------------
             # Update best move if this is an improvement
