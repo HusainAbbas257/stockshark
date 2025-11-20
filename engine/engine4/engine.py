@@ -19,40 +19,49 @@ ZOBRIST_SIDE = random.getrandbits(64)
 
 class Engine:
     def __init__(self):
-        self.tt={}
+        self.tt = {}
         self.init_zobrist()
         self.killer_moves = defaultdict(list)
-
-        self.history = [[0]*64 for _ in range(64)]
-
+        self.history = [[0] * 64 for _ in range(64)]
+        self.history_max = 10000  # Cap for history values
+        
         try:
             with open(opening_file_path, "r") as f:
                 self.opening = json.load(f)
         except FileNotFoundError:
             self.opening = {}
             
+    def clear_tt(self):
+        """Clear transposition table to free memory."""
+        self.tt.clear()
     def init_zobrist(self):
+        """Initialize Zobrist hashing tables with deterministic random values."""
         global ZOBRIST_PIECES, ZOBRIST_CASTLING, ZOBRIST_ENPASSANT, ZOBRIST_SIDE
-
+        
+        # Seed fixed for consistency across runs
         random.seed(1337)
-
-        ZOBRIST_PIECES = {}
-        ZOBRIST_CASTLING = {}
-        ZOBRIST_ENPASSANT = {}
-        ZOBRIST_SIDE = random.getrandbits(64)
-
+        
+        # Clear existing tables first
+        ZOBRIST_PIECES.clear()
+        ZOBRIST_CASTLING.clear()
+        ZOBRIST_ENPASSANT.clear()
+        
+        # Generate piece-square zobrist keys
         for piece_type in range(1, 7):
             for color in [chess.WHITE, chess.BLACK]:
                 for square in range(64):
                     ZOBRIST_PIECES[(piece_type, color, square)] = random.getrandbits(64)
-
+        
+        # Generate castling rights zobrist keys
         for right in ["K", "Q", "k", "q"]:
             ZOBRIST_CASTLING[right] = random.getrandbits(64)
-
+        
+        # Generate en passant file zobrist keys
         for file in range(8):
             ZOBRIST_ENPASSANT[file] = random.getrandbits(64)
-
-
+        
+        # Generate side to move zobrist key
+        ZOBRIST_SIDE = random.getrandbits(64)
     def compute_hash(self, board):
         h = 0
 
@@ -129,12 +138,16 @@ class Engine:
         # Only search captures where you take equal or higher value
         return piece_to.piece_type >= piece_from.piece_type
     def quiescence(self, board, alpha, beta, is_maximizing, depth=0, max_q=4):
+        """
+        Quiescence search to avoid horizon effect by searching only tactical moves.
+        Continues searching captures until a quiet position is reached.
+        """
         if depth >= max_q:
             return evaluate_board(board)
-
+        
         stand_pat = evaluate_board(board)
-
-        # Fail-hard conditions
+        
+        # Beta cutoff - position too good
         if is_maximizing:
             if stand_pat >= beta:
                 return beta
@@ -145,23 +158,24 @@ class Engine:
                 return alpha
             if stand_pat < beta:
                 beta = stand_pat
-
-        # Search only captures
-        for move in board.legal_moves:
-            if not board.is_capture(move):
-                continue
-
+        
+        # Generate only capture moves efficiently
+        capture_moves = [m for m in board.legal_moves if board.is_capture(m)]
+        
+        # Delta pruning: skip if even best capture can't improve position
+        if is_maximizing:
+            # If even capturing a queen won't help, skip
+            if stand_pat + 1000 < alpha:
+                return alpha
+        else:
+            if stand_pat - 1000 > beta:
+                return beta
+        
+        for move in capture_moves:
             board.push(move)
-            score = self.quiescence(
-                board,
-                alpha,
-                beta,
-                not is_maximizing,
-                depth + 1,
-                max_q
-            )
+            score = self.quiescence(board, alpha, beta, not is_maximizing, depth + 1, max_q)
             board.pop()
-
+            
             if is_maximizing:
                 if score >= beta:
                     return beta
@@ -172,9 +186,8 @@ class Engine:
                     return alpha
                 if score < beta:
                     beta = score
-
+        
         return alpha if is_maximizing else beta
-
         
     def minimax(self, board: 'chess.Board', depth: int, is_maximizing: bool, alpha: float = float('-inf'), beta: float = float('inf'),depth_count=1) -> float:
         """
@@ -263,34 +276,38 @@ class Engine:
             alpha_orig = alpha
             max_eval = float('-inf')
 
+            # In minimax(), maximizing player section:
             for idx, move in enumerate(moves):
-                # Evaluate flags BEFORE pushing (important: board.gives_check and is_capture must be called pre-push)
+                # Only evaluate expensive checks if we're considering LMR
                 is_capture = board.is_capture(move)
-                gives_check = board.gives_check(move)
                 is_killer = move in self.killer_moves.get(depth, [])
-
-                board.push(move)
-
-                # --- LMR CONDITIONS ---
-                # NOTE: use pre-push flags; only reduce for quiet, non-check, non-killer late moves
-                if (
+                
+                # Check if this move qualifies for LMR
+                can_reduce = (
                     depth >= 3
-                    and idx >= 3                 # late moves
+                    and idx >= 4  # Late move (after first 4)
                     and not is_capture
-                    and not gives_check
                     and not is_killer
-                ):
-                    # reduced search
-                    eval_score = self.minimax(board, depth-2, False, alpha, beta, depth_count+1)
-
-                    # if it unexpectedly looks good, re-search at full depth
+                )
+                
+                # Only call gives_check if we're reducing (expensive call)
+                if can_reduce:
+                    gives_check = board.gives_check(move)
+                    can_reduce = not gives_check
+                
+                board.push(move)
+                
+                if can_reduce:
+                    # Reduced depth search
+                    eval_score = self.minimax(board, depth - 2, False, alpha, beta, depth_count + 1)
+                    
+                    # Re-search if promising
                     if eval_score > alpha:
-                        eval_score = self.minimax(board, depth-1, False, alpha, beta, depth_count+1)
-
+                        eval_score = self.minimax(board, depth - 1, False, alpha, beta, depth_count + 1)
                 else:
-                    # normal search (pure minimax: no sign-negation)
-                    eval_score = self.minimax(board, depth-1, False, alpha, beta, depth_count+1)
-
+                    # Normal full-depth search
+                    eval_score = self.minimax(board, depth - 1, False, alpha, beta, depth_count + 1)
+                
                 board.pop()
 
 
@@ -302,14 +319,29 @@ class Engine:
                 if alpha >= beta:
                     # storing this move as a good move:
                     self.history[move.from_square][move.to_square] += depth_count * depth_count
+                    # Cap the value to prevent overflow
+                    if self.history[move.from_square][move.to_square] > self.history_max:
+                        # Age all history values when one exceeds max
+                        for i in range(64):
+                            for j in range(64):
+                                self.history[i][j] //= 2
                     # storing killer moves 
                     if depth not in self.killer_moves:
                         self.killer_moves[depth] = []
 
-                    if move not in self.killer_moves[depth]:
-                        self.killer_moves[depth].insert(0, move)
-                        # limit to 2
-                        self.killer_moves[depth] = self.killer_moves[depth][:2]
+                    # Store killer moves (max 2 per depth)
+                    killers = self.killer_moves[depth]
+
+                    # Check if move already in killer list
+                    if len(killers) == 0:
+                        killers.append(move)
+                    elif len(killers) == 1:
+                        if killers[0] != move:
+                            killers.insert(0, move)
+                    else:  # len == 2
+                        if killers[0] != move and killers[1] != move:
+                            killers.pop()  # Remove oldest
+                            killers.insert(0, move)  # Add newest at front
 
                     # Beta cutoff at maximizing node -> LOWERBOUND
                     self.tt_store(key, depth, alpha, "LOWERBOUND")
@@ -370,15 +402,30 @@ class Engine:
                 if beta <= alpha:
                     # history update on cutoff
                     self.history[move.from_square][move.to_square] += depth_count * depth_count
+                    # Cap the value to prevent overflow
+                    if self.history[move.from_square][move.to_square] > self.history_max:
+                        # Age all history values when one exceeds max
+                        for i in range(64):
+                            for j in range(64):
+                                self.history[i][j] //= 2
 
                     # killer moves
                     if depth not in self.killer_moves:
                         self.killer_moves[depth] = []
 
-                    # store killer move for minimizing player too
-                    if move not in self.killer_moves[depth]:
-                        self.killer_moves[depth].insert(0, move)
-                        self.killer_moves[depth] = self.killer_moves[depth][:2]
+                    # Store killer moves (max 2 per depth)
+                    killers = self.killer_moves[depth]
+
+                    # Check if move already in killer list
+                    if len(killers) == 0:
+                        killers.append(move)
+                    elif len(killers) == 1:
+                        if killers[0] != move:
+                            killers.insert(0, move)
+                    else:  # len == 2
+                        if killers[0] != move and killers[1] != move:
+                            killers.pop()  # Remove oldest
+                            killers.insert(0, move)  # Add newest at front
 
                     # Alpha cutoff at minimizing node -> UPPERBOUND
                     self.tt_store(key, depth, beta, "UPPERBOUND")
@@ -435,6 +482,10 @@ class Engine:
             - Uses ordered_moves() to improve alpha-beta pruning efficiency
             - The root node always uses full alpha-beta window (-inf, +inf)
         """
+        # dont forget to clear the transopstion table or code may take too much memortry:
+        if len(self.tt) > 1000000:  # 1M entries
+            self.tt.clear()
+        
         
         fen = board.fen()
         moves_list = self.opening.get(fen)
@@ -757,11 +808,11 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    # e.self_play(3, 50)
+    e.self_play(3, 50)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
     # e.compare(depth1=1,depth2=3,max_moves=25)
-    e.play_against_human(chess.BLACK,4)
+    # e.play_against_human(chess.BLACK,4)
     
     '''legendry game against @chess.com zamanatop:
     [Event "?"]

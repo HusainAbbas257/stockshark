@@ -104,6 +104,27 @@ piece_square_table= {
             -4,   3, -14, -50, -57, -30,  13,   4,
             17,  30,  45, -30,   6,  -30,  40,  18),
 }
+def calculate_mobility(board: chess.Board) -> float:
+    """
+    Calculate mobility advantage for the side to move.
+    Mobility = number of legal moves available.
+    """
+    # Store original turn
+    original_turn = board.turn
+    
+    # Count white's mobility
+    board.turn = chess.WHITE
+    white_mobility = len(list(board.legal_moves))
+    
+    # Count black's mobility
+    board.turn = chess.BLACK
+    black_mobility = len(list(board.legal_moves))
+    
+    # Restore original turn
+    board.turn = original_turn
+    
+    # Return difference (positive = white advantage)
+    return white_mobility - black_mobility
 def get_current_material(board):
     total = 0
     for piece_type, value in PIECE_VALUES.items():
@@ -344,20 +365,8 @@ def evaluate(board: 'chess.Board') -> float:
     # =============================================================================
     # MOBILITY EVALUATION
     # =============================================================================
-    
-    # More legal moves = more tactical options and flexibility
-    # Count legal moves for the side to move
-    white_board = board.copy()
-    white_board.turn = chess.WHITE
-    white_moves = len(list(white_board.legal_moves))
-
-    black_board = board.copy()
-    black_board.turn = chess.BLACK
-    black_moves = len(list(black_board.legal_moves))
-
-
-    # it decreases in endgame
-    mobility_score = (white_moves - black_moves) * weights['MOBILITY_WEIGHT']*phase
+    # new simplified mobility calculation 
+    mobility_score = calculate_mobility(board) * weights['MOBILITY_WEIGHT'] * phase
 
     #bishop pair advantage calculation
     if len(board.pieces(chess.BISHOP, chess.WHITE)) == 2:
