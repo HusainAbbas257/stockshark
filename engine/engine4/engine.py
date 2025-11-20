@@ -503,7 +503,7 @@ class Engine:
             return (move, 0)
         
         
-        # resett killers and history:   
+        # resett killers and history:
         self.killer_moves = defaultdict(list)
         self.history = [[0]*64 for _ in range(64)]
 

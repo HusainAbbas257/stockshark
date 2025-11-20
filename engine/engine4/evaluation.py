@@ -394,79 +394,39 @@ def evaluate(board: 'chess.Board') -> float:
     )
     
     return total_evaluation
-# evaluation.py
-def ordered_moves(board: 'chess.Board', killer_moves=None, depth=0, history=None) -> list:
-    """
-    Orders legal moves using heuristic scoring to optimize alpha-beta pruning.
-    Includes killer move heuristic.
-    """
-    # Defensive defaults (avoid mutable default args)
+def ordered_moves(board, killer_moves=None, depth=0, history=None):
     if killer_moves is None:
         killer_moves = {}
     if history is None:
-        history = [[0] * 64 for _ in range(64)]
+        history = [[0]*64 for _ in range(64)]
 
-    # scoring constants
-    PROMOTION_BONUS = 10_000
-    KILLER_BONUS     = 9_000      # below promotion, above captures
-    CAPTURE_BASE     = 1_000
-    CASTLING_BONUS   = 500
-    CENTER_BONUS     = 100
-
-    CENTER_SQUARES = {chess.D4, chess.D5, chess.E4, chess.E5}
-
+    killers = killer_moves.get(depth, [])
     move_scores = []
 
-    # retrieve killer moves for this depth (ensure list-like)
-    killers = killer_moves.get(depth, [])
-    if killers is None:
-        killers = []
-
+    # Pre-calc MVV-LVA cheaply
     for move in board.legal_moves:
         score = 0
-        target_piece = board.piece_at(move.to_square)
 
-        # PRIORITY 0 — KILLER MOVES (quiet only)
+        # KILLERS
         if move in killers:
-            if not target_piece and not move.promotion and not board.is_castling(move):
-                score += KILLER_BONUS
+            score += 9000
 
-        # PRIORITY 1 — PROMOTIONS
-        if move.promotion:
-            score += PROMOTION_BONUS
+        # CAPTURES
+        if board.is_capture(move):
+            victim = board.piece_at(move.to_square)
+            if victim:
+                score += (PIECE_VALUES[victim.piece_type] * 10)
+        # CENTER BONUSES (cheap)
+        if move.to_square in (chess.E4, chess.D4, chess.E5, chess.D5):
+            score += 100
 
-        # PRIORITY 2 — CAPTURES (MVV-LVA)
-        elif target_piece:
-            attacker_piece = board.piece_at(move.from_square)
-            victim = PIECE_VALUES.get(target_piece.piece_type, 0)
-            attacker = PIECE_VALUES.get(attacker_piece.piece_type, 1) if attacker_piece else 1
-            # MVV-LVA style: prefer capturing high value victims with low-value attackers
-            score += CAPTURE_BASE * victim - attacker
-
-        # PRIORITY 3 — CASTLING
-        elif board.is_castling(move):
-            score += CASTLING_BONUS
-
-        # PRIORITY 4 — CENTER CONTROL
-        elif move.to_square in CENTER_SQUARES:
-            score += CENTER_BONUS
-
-        # Priority 5 - history heuristic
-        else:
-            score += history[move.from_square][move.to_square]
+        # HISTORY LAST
+        score += history[move.from_square][move.to_square]
 
         move_scores.append((score, move))
 
-    # sort best first
-    move_scores.sort(reverse=True, key=lambda x: x[0])
-    return [m for s, m in move_scores]
-
-
-
-
-
-
-
+    move_scores.sort(key=lambda x: x[0], reverse=True)
+    return [m for _, m in move_scores]
 
 
 def auto_tune(phase: str, param: str, tests: dict, weight_range=None):
