@@ -12,19 +12,20 @@ PIECE_VALUES = {
     chess.QUEEN: 929,     
     chess.KING: 60000      
 }
-opening_values= {
-    "KING_SAFETY_WEIGHT": 4.21875,
-    "MOBILITY_WEIGHT": 0.421875,
-    "MATE_VALUE": 6000.0,
-    "BISHOP_PAIR_BASE": 2.8125,
-    "POSITIONAL_WEIGHT": 0.0087890625,
-    "KING_TROP_WEIGHT": 0.0703125,
-    "DEFENCE_FACTOR": 0.0703125,
-    "ATTACK_FACTOR": 0.0665625,
-    "PAWN_CHAIN": 6.0,
-    "PASSED_PAWN": 20.0,
-    "PAWN_FACTOR": 0.5,
+opening_values = {
+    "KING_SAFETY_WEIGHT": 2.109375,
+    "MOBILITY_WEIGHT": 0.2109375,
+    "MATE_VALUE": 3000.0,
+    "BISHOP_PAIR_BASE": 1.40625,
+    "POSITIONAL_WEIGHT": 0.00439453,
+    "KING_TROP_WEIGHT": 0.03515625,
+    "DEFENCE_FACTOR": 0.03515625,
+    "ATTACK_FACTOR": 0.03328125,
+    "PAWN_CHAIN": 3.0,
+    "PASSED_PAWN": 10.0,
+    "PAWN_FACTOR": 0.25,
 }
+
 middlegame_values = {
     "KING_SAFETY_WEIGHT": 3.75,
     "MOBILITY_WEIGHT": 2.25,
@@ -438,6 +439,8 @@ def ordered_moves(board, killer_moves=None, depth=0, history=None):
 
 
 def auto_tune(phase: str, param: str, tests: dict, weight_range=None):
+    import chess
+    import chess.engine
 
     phase_maps = {
         "opening": opening_values,
@@ -453,27 +456,38 @@ def auto_tune(phase: str, param: str, tests: dict, weight_range=None):
     if param not in WEIGHTS:
         raise ValueError(f"Invalid param {param}. Available: {list(WEIGHTS.keys())}")
 
-    # -----------------------------
-    # RANGE OF VALUES TO TEST
-    # -----------------------------
+    # -------------------------------------
+    # AUTO RANGE IF NOT SPECIFIED
+    # -------------------------------------
     if weight_range is None:
-        # automatic reasonable tuning range
         base = WEIGHTS[param]
-        weight_range = [base * 0.5, base * 0.75, base, base * 1.25, base * 1.5]
+        weight_range = [
+            round(base * 0.50, 8),
+            round(base * 0.75, 8),
+            round(base * 1.00, 8),
+            round(base * 1.25, 8),
+            round(base * 1.50, 8)
+        ]
 
     print("\n=========================================")
     print(f"   AUTO TUNING PARAMETER: {param}")
     print(f"   PHASE: {phase}")
     print("=========================================\n")
 
-    # -----------------------------
-    # ENGINE SETUP
-    # -----------------------------
+    # -------------------------------------
+    # ENGINE SETUP (NO MULTIPV!)
+    # -------------------------------------
     engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-    engine.configure({"Threads": 1, "Hash": 32})
+    engine.configure({
+        "Threads": 1,
+        "Hash": 64
+    })
 
     results = {}
 
+    # -------------------------------------
+    # START TESTING
+    # -------------------------------------
     for value in weight_range:
         print(f"\n------ TESTING {param} = {value} ------\n")
 
@@ -484,34 +498,33 @@ def auto_tune(phase: str, param: str, tests: dict, weight_range=None):
             board = chess.Board(fen)
 
             if not board.is_valid():
-                # print(f"[SKIP] {name} -> invalid FEN.")
                 continue
 
-            my_eval = evaluate(board)  # your eval
+            # your static eval
+            my_eval = evaluate(board)
 
+            # stockfish eval
             info = engine.analyse(board, chess.engine.Limit(depth=2))
             sf_eval = info["score"].white().score(mate_score=WEIGHTS["MATE_VALUE"])
 
             diff = abs(my_eval - sf_eval)
             diffs.append(diff)
 
-            # print(f"{name}:  diff = {diff}")
-            # print(f"  Yours = {my_eval}")
-            # print(f"  SF    = {sf_eval}")
-            # print("")
+            engine.ping()  # avoid buffer clog
 
-            engine.ping()
+        if len(diffs) == 0:
+            avg = float("inf")
+        else:
+            avg = sum(diffs) / len(diffs)
 
-        avg = sum(diffs) / len(diffs)
         results[value] = avg
-
         print(f"==> AVERAGE DIFF FOR {param}={value}: {avg}\n")
 
     engine.quit()
 
-    # -----------------------------
+    # -------------------------------------
     # BEST VALUE
-    # -----------------------------
+    # -------------------------------------
     best_value = min(results, key=results.get)
 
     print("\n=========================================")
@@ -642,6 +655,6 @@ if __name__ == "__main__":
 #     "Pawn Storm": "rnbq1rk1/ppppppbp/6p1/8/3PP3/2N2N2/PPP2PPP/R1BQ1RK1 w - - 0 6",
 }
     
-    for factor in middlegame_values:
+    for factor in opening_values:
 
-        print(auto_tune("middlegame", factor, tests))
+        print(auto_tune("opening", factor, tests))
