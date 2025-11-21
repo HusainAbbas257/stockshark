@@ -152,6 +152,9 @@ class Engine:
     # ------------------------------
     # Incremental evaluation helpers
     # ------------------------------
+    def evaluate_fast(self):
+        """Ultra-fast eval using cached incremental values - NO BOARD SCAN"""
+        return self.material_score + (self.pst_score * 0.028125)
     def init_eval_cache(self, board: 'chess.Board'):
         """Compute initial material_score and pst_score from board."""
         mat = 0
@@ -167,11 +170,12 @@ class Engine:
                 pst += pst_val
             else:
                 mat -= val
-                pst -= pst_val
+                # BLACK PIECES: USE MIRRORED PST (FIXED)
+                mirrored = chess.square_mirror(sq)
+                pst -= piece_square_table.get(p.piece_type, (0,)*64)[mirrored]
         self.material_score = mat
         self.pst_score = pst
         self._eval_stack = []
-
     def push_move_with_eval(self, board: 'chess.Board', move: 'chess.Move'):
         """
         Replace board.push(move) with this.
@@ -203,9 +207,15 @@ class Engine:
                     delta_mat += (new_val - old_val)
                 # otherwise material unchanged for white move (unless capture handled below)
             else:
+                # BLACK PIECES: USE MIRRORED PST (FIXED)
+                from_mirror = chess.square_mirror(move.from_square)
+                to_mirror = chess.square_mirror(move.to_square)
+                from_pst_mirror = piece_square_table.get(moving.piece_type, (0,)*64)[from_mirror]
+                to_pst_mirror = piece_square_table.get(dest_piece_type, (0,)*64)[to_mirror]
+                
                 # black moves decrease white advantage when piece leaves from_square
-                delta_pst += from_pst
-                delta_pst -= to_pst
+                delta_pst += from_pst_mirror
+                delta_pst -= to_pst_mirror
                 if promo:
                     old_val = PIECE_VALUES.get(moving.piece_type, 0)
                     new_val = PIECE_VALUES.get(promo, old_val)
@@ -218,22 +228,28 @@ class Engine:
             cap = board.piece_at(ep_sq)
             if cap:
                 cap_val = PIECE_VALUES.get(cap.piece_type, 0)
-                cap_pst = piece_square_table.get(cap.piece_type, (0,)*64)[ep_sq]
                 if cap.color == chess.WHITE:
                     delta_mat -= cap_val
+                    cap_pst = piece_square_table.get(cap.piece_type, (0,)*64)[ep_sq]
                     delta_pst -= cap_pst
                 else:
                     delta_mat += cap_val
+                    # BLACK CAPTURED: USE MIRRORED PST
+                    ep_mirror = chess.square_mirror(ep_sq)
+                    cap_pst = piece_square_table.get(cap.piece_type, (0,)*64)[ep_mirror]
                     delta_pst += cap_pst
         else:
             if captured:
                 cap_val = PIECE_VALUES.get(captured.piece_type, 0)
-                cap_pst = piece_square_table.get(captured.piece_type, (0,)*64)[move.to_square]
                 if captured.color == chess.WHITE:
                     delta_mat -= cap_val
+                    cap_pst = piece_square_table.get(captured.piece_type, (0,)*64)[move.to_square]
                     delta_pst -= cap_pst
                 else:
                     delta_mat += cap_val
+                    # BLACK CAPTURED: USE MIRRORED PST
+                    to_mirror = chess.square_mirror(move.to_square)
+                    cap_pst = piece_square_table.get(captured.piece_type, (0,)*64)[to_mirror]
                     delta_pst += cap_pst
 
         # Handle castling: rook also moves; include rook PST delta
@@ -267,8 +283,13 @@ class Engine:
                         delta_pst -= rf_pst
                         delta_pst += rt_pst
                     else:
-                        delta_pst += rf_pst
-                        delta_pst -= rt_pst
+                        # BLACK ROOK: USE MIRRORED PST
+                        rf_mirror = chess.square_mirror(rook_from)
+                        rt_mirror = chess.square_mirror(rook_to)
+                        rf_pst_m = piece_square_table.get(rook_piece.piece_type, (0,)*64)[rf_mirror]
+                        rt_pst_m = piece_square_table.get(rook_piece.piece_type, (0,)*64)[rt_mirror]
+                        delta_pst += rf_pst_m
+                        delta_pst -= rt_pst_m
 
         # Apply deltas to caches
         self.material_score += delta_mat
@@ -304,9 +325,11 @@ class Engine:
         Continues searching captures until a quiet position is reached.
         """
         if depth >= max_q:
-            return evaluate_board(board)
+            # USE CACHED EVAL INSTEAD OF FULL EVALUATION
+            return self.material_score + (self.pst_score * 0.028125)
         
-        stand_pat = evaluate_board(board)
+        # USE CACHED EVAL - MASSIVE SPEEDUP
+        stand_pat = self.material_score + (self.pst_score * 0.028125)
         
         # Beta cutoff - position too good
         if is_maximizing:
@@ -661,6 +684,8 @@ class Engine:
             move = chess.Move.from_uci(uci)  # convert to move object
             return (move, 0)
         
+        # INITIALIZE EVAL CACHE HERE - CRITICAL FIX
+        self.init_eval_cache(board)
         
         # resett killers and history:
         self.killer_moves = defaultdict(list)
@@ -703,7 +728,7 @@ class Engine:
         # If there are no legal moves, the game is over (checkmate or stalemate)
         # Return None for move and current evaluation
         if not moves:
-            return None,evaluate_board(board)
+            return None, self.evaluate_fast()
         
         # =============================================================================
         # ROOT MOVE ITERATION - Evaluate each legal move
@@ -959,7 +984,7 @@ class Engine:
         
         print(f"\nResult: {board.result()}")
         print(f"Total moves: {len(move_history)}")
-        print(f"\nMove sequence: {' '.join(move_history)}")
+        print(f"\nMove sequence: {move_history}")
         print("="*60 + "\n")
         
         return {
@@ -972,10 +997,10 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    e.self_play(3, 50)
+    # e.self_play(4, 50)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
-    # e.compare(depth1=1,depth2=3,max_moves=25)
+    e.compare(depth1=3,depth2=4,max_moves=500)
     # e.play_against_human(chess.BLACK,4)
     
     '''legendry game against @chess.com zamanatop:
