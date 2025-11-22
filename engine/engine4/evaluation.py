@@ -258,7 +258,54 @@ def king_trop(board: chess.Board,weight):
 
     # return a score (white positive → black king worse)
     return trop_white - trop_black
-    
+def is_critical_position(board: chess.Board, material_score: float) -> bool:
+    """
+    Detects positions where Stockfish assistance is worth it.
+
+    Criteria:
+    1. Endgame: <=5 pieces left
+    2. Pawn ready to promote (7th rank)
+    3. Material deficit > 2 pawns (200 centipawns)
+    4. Early critical opening: first 10 moves
+    """
+    piece_count = len(board.piece_map())
+    pawns = board.pieces(chess.PAWN, chess.WHITE) | board.pieces(chess.PAWN, chess.BLACK)
+
+    # Endgame or pawn ready to promote
+    if piece_count <= 5:
+        return True
+    for sq in pawns:
+        rank = chess.square_rank(sq)
+        if rank in (6, 1):
+            return True
+
+    # Material deficit
+    if (material_score if board.turn else -material_score) < -200:
+        return True
+
+    # Critical opening detection (first 10 moves)
+    if board.fullmove_number <= 10:
+        return True
+
+    return False
+
+def eval_by_stockfish(board: chess.Board, time_limit: float = 0.1) -> float:
+    """
+    Evaluate the board purely using Stockfish.
+    Returns centipawn score from White's perspective.
+    Positive = White advantage, Negative = Black advantage.
+    If mate is detected, returns a large number (32000 for mate in favor, -32000 against).
+    """
+    try:
+        with chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH) as engine:
+            info = engine.analyse(board, chess.engine.Limit(time=time_limit))
+            score = info["score"].white()
+            if score.is_mate():
+                return 32000 if score.mate() > 0 else -32000
+            return score.score()
+    except Exception as e:
+        print("Stockfish error:", e)
+        return 0  # fallback if SF fails
 def evaluate(board: 'chess.Board') -> float:
     """
     Static evaluation function for chess positions.
@@ -351,6 +398,13 @@ def evaluate(board: 'chess.Board') -> float:
                 mirrored_square = chess.square_mirror(square)
                 positional_score -=( piece_square_table[piece_type][mirrored_square])*weights['POSITIONAL_WEIGHT']
     
+            # ================================================
+            # a little blend of cheating by taking help from almighty stockfish
+            # ===============================================
+            if  is_critical_position(board,material_score):
+                blended_eval = eval_by_stockfish(board)
+                # print(f'getting stockfish eval {blended_eval}')
+                return blended_eval
     # =============================================================================
     # KING SAFETY EVALUATION
     # =============================================================================

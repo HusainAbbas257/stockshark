@@ -942,8 +942,7 @@ class Engine:
                 break
             
             # Display move info
-            eval_str = f"{evaluation:+.1f}" if abs(evaluation) < 10000 else \
-                    ("+inf" if evaluation > 0 else "-inf")
+            eval_str = f"{evaluation:+.1f}"
             
             print(f"{current_player} plays {best_move_found.uci()} with eval={eval_str}")
             
@@ -997,11 +996,11 @@ class Engine:
         }
 if __name__ == "__main__":
     e = Engine()
-    # e.self_play(4, 50)
+    # e.self_play(4, 100)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
-    # e.compare(depth1=3,depth2=4,max_moves=500)
-    e.play_against_human(chess.WHITE,5)
+    e.compare(depth1=4,depth2=5,max_moves=150)
+    # e.play_against_human(chess.WHITE,5)
     
     '''legendry game against @chess.com zamanatop:
     [Event "?"]
