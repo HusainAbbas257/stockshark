@@ -670,7 +670,7 @@ class Engine:
             - The root node always uses full alpha-beta window (-inf, +inf)
         """
         # dont forget to clear the transopstion table or code may take too much memortry:
-        if len(self.tt) > 1000000:  # 1M entries
+        if len(self.tt) > 10000000:  # 10M entries
             self.tt.clear()
         
         
@@ -999,8 +999,8 @@ if __name__ == "__main__":
     # e.self_play(4, 100)
     # # b=chess.Board('rn4k1/ppp1rpbp/4N1p1/3q3P/3pN3/7P/PPP2P2/R2QKB1R b KQ - 0 13')
     # print(e.best_move(b,5))
-    e.compare(depth1=4,depth2=5,max_moves=150)
-    # e.play_against_human(chess.WHITE,5)
+    # e.compare(depth1=4,depth2=5,max_moves=150)
+    e.play_against_human(chess.BLACK,6)
     
     '''legendry game against @chess.com zamanatop:
     [Event "?"]
